@@ -1,0 +1,1715 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code 源码深度解析教程</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+</head>
+<body>
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">⌘</div>
+            <h2>Claude Code 源码解析</h2>
+            <p class="version">v2.1.88</p>
+        </div>
+        <ul class="nav-list">
+            <li><a href="#overview" class="nav-link active" data-section="overview">项目概述</a></li>
+            <li><a href="#structure" class="nav-link" data-section="structure">目录结构</a></li>
+            <li><a href="#architecture" class="nav-link" data-section="architecture">架构总览</a></li>
+            <li><a href="#entrypoint" class="nav-link" data-section="entrypoint">启动流程</a></li>
+            <li><a href="#query-engine" class="nav-link" data-section="query-engine">Agent 核心循环</a></li>
+            <li><a href="#tools" class="nav-link" data-section="tools">工具系统</a></li>
+            <li><a href="#commands" class="nav-link" data-section="commands">命令系统</a></li>
+            <li><a href="#api" class="nav-link" data-section="api">API 调用层</a></li>
+            <li><a href="#mcp" class="nav-link" data-section="mcp">MCP 集成</a></li>
+            <li><a href="#ui" class="nav-link" data-section="ui">终端 UI (Ink)</a></li>
+            <li><a href="#state" class="nav-link" data-section="state">状态管理</a></li>
+            <li><a href="#permissions" class="nav-link" data-section="permissions">权限系统</a></li>
+            <li><a href="#features" class="nav-link" data-section="features">Feature Flags</a></li>
+            <li><a href="#plugins" class="nav-link" data-section="plugins">插件与技能</a></li>
+            <li><a href="#swarm" class="nav-link" data-section="swarm">多 Agent 协作</a></li>
+            <li><a href="#deps" class="nav-link" data-section="deps">依赖分析</a></li>
+            <li><a href="#summary" class="nav-link" data-section="summary">总结与启示</a></li>
+        </ul>
+    </nav>
+
+    <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+
+    <main class="content" id="content">
+        <!-- 项目概述 -->
+        <section id="overview" class="section">
+            <div class="section-header">
+                <span class="section-number">01</span>
+                <h1>项目概述</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>什么是 Claude Code？</h3>
+                <p><strong>Claude Code</strong> 是 Anthropic 推出的终端 AI 编程助手。它可以直接在你的终端中运行，理解你的代码库，编辑文件，执行终端命令，并为你处理完整的工作流程。</p>
+            </div>
+
+            <div class="card">
+                <h3>本仓库的性质</h3>
+                <p>本仓库是通过 npm 发布包 <code>@anthropic-ai/claude-code</code> 中附带的 source map (<code>cli.js.map</code>) 还原出的 TypeScript 源码。</p>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">npm 包</span>
+                        <span class="info-value">@anthropic-ai/claude-code</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">还原版本</span>
+                        <span class="info-value">2.1.88</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">还原文件数</span>
+                        <span class="info-value">4756 个</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">TS/TSX 源文件</span>
+                        <span class="info-value">1884 个</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>核心能力</h3>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon">🔧</div>
+                        <h4>工具调用</h4>
+                        <p>30+ 内置工具：Bash 执行、文件读写编辑、Grep/Glob 搜索、Web 抓取等</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">🤖</div>
+                        <h4>Agent 循环</h4>
+                        <p>基于 QueryEngine 的多轮对话，自动调用工具完成复杂任务</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">🔌</div>
+                        <h4>MCP 协议</h4>
+                        <p>支持 Model Context Protocol，可连接外部 MCP 服务器扩展能力</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">🖥️</div>
+                        <h4>终端 UI</h4>
+                        <p>基于 React + Ink 的精美终端界面，支持交互式 REPL</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">👥</div>
+                        <h4>多 Agent</h4>
+                        <p>支持 Coordinator 模式和 Swarm 协作，多 Agent 并行处理</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">🔐</div>
+                        <h4>权限管控</h4>
+                        <p>细粒度权限系统，控制工具访问和文件操作权限</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 目录结构 -->
+        <section id="structure" class="section">
+            <div class="section-header">
+                <span class="section-number">02</span>
+                <h1>目录结构</h1>
+            </div>
+
+            <div class="card">
+                <h3>仓库根目录</h3>
+                <pre><code class="language-plaintext">claude-code-sourcemap/
+├── README.md                    # 项目说明 (非官方声明)
+├── package/                     # npm 发布包镜像
+│   ├── package.json             # 包元数据 (bin: claude → cli.js)
+│   ├── cli.js                   # 单文件 ESM 打包产物 (~13MB)
+│   ├── README.md                # 官方产品说明
+│   └── LICENSE.md               # 许可证
+└── restored-src/                # 还原的源码
+    ├── src/                     # 主应用源码 (~1900 文件)
+    └── vendor/                  # 辅助工具源码</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>核心源码结构 <code>restored-src/src/</code></h3>
+                <div class="tree-view">
+                    <div class="tree-section">
+                        <h4>入口与核心</h4>
+                        <pre><code class="language-plaintext">src/
+├── entrypoints/
+│   ├── cli.tsx           # CLI 入口: 快速路径处理, 动态加载 main
+│   └── init.ts           # 初始化: 配置、环境、OAuth、遥测
+├── main.tsx              # 主函数: Commander 设置, 启动 REPL
+├── replLauncher.tsx      # REPL 启动器: 挂载 Ink UI
+├── QueryEngine.ts        # Agent 核心循环引擎
+├── query.ts              # 底层查询执行
+├── Tool.ts               # Tool 类型定义
+├── tools.ts              # 工具注册表
+└── commands.ts           # 命令注册表</code></pre>
+                    </div>
+                    <div class="tree-section">
+                        <h4>工具实现 (30+ 个)</h4>
+                        <pre><code class="language-plaintext">src/tools/
+├── BashTool/             # Bash 命令执行
+├── FileReadTool/         # 文件读取
+├── FileWriteTool/        # 文件写入
+├── FileEditTool/         # 文件编辑 (搜索替换)
+├── GrepTool/             # 内容搜索 (ripgrep)
+├── GlobTool/             # 文件名搜索
+├── WebFetchTool/         # Web 页面抓取
+├── WebSearchTool/        # Web 搜索
+├── AgentTool/            # 子 Agent 创建
+├── MCPTool/              # MCP 工具桥接
+├── NotebookEditTool/     # Jupyter 笔记本编辑
+├── TodoWriteTool/        # 任务列表管理
+├── AskUserQuestionTool/  # 向用户提问
+├── SkillTool/            # 技能调用
+├── EnterPlanModeTool/    # 进入计划模式
+├── ExitPlanModeTool/     # 退出计划模式
+├── TaskCreateTool/       # 任务创建
+├── SendMessageTool/      # 发送消息 (Agent 间)
+├── LSPTool/              # LSP 语言服务
+├── EnterWorktreeTool/    # 进入工作树
+└── ... (更多)</code></pre>
+                    </div>
+                    <div class="tree-section">
+                        <h4>服务层</h4>
+                        <pre><code class="language-plaintext">src/services/
+├── api/
+│   ├── claude.ts         # Anthropic API 调用 (流式/非流式)
+│   ├── bootstrap.ts      # 启动数据预取
+│   ├── errors.ts         # API 错误处理
+│   └── logging.ts        # 请求日志
+├── mcp/
+│   ├── client.ts         # MCP 客户端 (stdio/SSE/HTTP)
+│   └── types.ts          # MCP 类型定义
+├── analytics/            # 分析服务 (GrowthBook)
+├── policyLimits/         # 策略限制
+├── remoteManagedSettings/# 远程托管设置
+└── compact/              # 历史压缩</code></pre>
+                    </div>
+                    <div class="tree-section">
+                        <h4>UI 与状态</h4>
+                        <pre><code class="language-plaintext">src/
+├── screens/
+│   └── REPL.tsx          # 主 REPL 屏幕
+├── components/           # UI 组件 (Ink)
+├── hooks/                # React Hooks
+├── ink/                  # Ink 渲染辅助
+├── context/              # React Context
+├── state/
+│   └── AppState.tsx      # 应用状态容器
+└── bootstrap/
+    └── state.ts          # 全局会话状态</code></pre>
+                    </div>
+                    <div class="tree-section">
+                        <h4>扩展功能</h4>
+                        <pre><code class="language-plaintext">src/
+├── coordinator/          # 多 Agent 协调模式
+├── assistant/            # 助手模式 (KAIROS)
+├── buddy/                # AI 伴侣 UI
+├── plugins/              # 插件系统
+├── skills/               # 技能系统
+├── voice/                # 语音交互
+├── vim/                  # Vim 模式
+├── remote/               # 远程会话
+├── daemon/               # 守护进程
+├── tasks/                # 任务管理
+└── utils/                # 大量工具函数
+    ├── git/              # Git 操作
+    ├── model/            # 模型选择
+    ├── permissions/      # 权限处理
+    ├── swarm/            # 多 Agent 协作
+    ├── shell/            # Shell 工具
+    └── settings/         # 设置管理</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 架构总览 -->
+        <section id="architecture" class="section">
+            <div class="section-header">
+                <span class="section-number">03</span>
+                <h1>架构总览</h1>
+            </div>
+
+            <div class="card">
+                <h3>系统架构图</h3>
+                <div class="architecture-diagram">
+                    <div class="arch-layer" style="--layer-color: #6366f1">
+                        <div class="arch-layer-label">用户交互层</div>
+                        <div class="arch-boxes">
+                            <div class="arch-box">CLI (Commander)</div>
+                            <div class="arch-box">Terminal UI (Ink + React)</div>
+                            <div class="arch-box">REPL 屏幕</div>
+                        </div>
+                    </div>
+                    <div class="arch-arrow">▼</div>
+                    <div class="arch-layer" style="--layer-color: #8b5cf6">
+                        <div class="arch-layer-label">核心引擎层</div>
+                        <div class="arch-boxes">
+                            <div class="arch-box primary">QueryEngine (Agent 循环)</div>
+                            <div class="arch-box">命令路由</div>
+                            <div class="arch-box">权限管控</div>
+                        </div>
+                    </div>
+                    <div class="arch-arrow">▼</div>
+                    <div class="arch-layer" style="--layer-color: #a855f7">
+                        <div class="arch-layer-label">工具与服务层</div>
+                        <div class="arch-boxes">
+                            <div class="arch-box">30+ 内置工具</div>
+                            <div class="arch-box">MCP 桥接</div>
+                            <div class="arch-box">Plugin / Skill</div>
+                        </div>
+                    </div>
+                    <div class="arch-arrow">▼</div>
+                    <div class="arch-layer" style="--layer-color: #c084fc">
+                        <div class="arch-layer-label">API 与外部服务</div>
+                        <div class="arch-boxes">
+                            <div class="arch-box">Anthropic API (流式)</div>
+                            <div class="arch-box">MCP Servers</div>
+                            <div class="arch-box">OAuth / Auth</div>
+                        </div>
+                    </div>
+                    <div class="arch-arrow">▼</div>
+                    <div class="arch-layer" style="--layer-color: #d8b4fe">
+                        <div class="arch-layer-label">基础设施层</div>
+                        <div class="arch-boxes">
+                            <div class="arch-box">全局状态 (bootstrap/state)</div>
+                            <div class="arch-box">遥测 (OpenTelemetry)</div>
+                            <div class="arch-box">会话存储</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>核心设计原则</h3>
+                <div class="principles">
+                    <div class="principle">
+                        <h4>1. 极致的冷启动优化</h4>
+                        <p><code>cli.tsx</code> 通过快速路径检测 (如 <code>--version</code>) 避免加载整个应用，所有 import 均为动态导入，最小化模块加载时间。</p>
+                    </div>
+                    <div class="principle">
+                        <h4>2. 编译时特性门控</h4>
+                        <p>使用 <code>feature('FLAG')</code> (来自 <code>bun:bundle</code>) 实现死代码消除，未启用的功能在打包时被完全移除。</p>
+                    </div>
+                    <div class="principle">
+                        <h4>3. 单文件打包分发</h4>
+                        <p>所有依赖 (SDK, React, Ink, lodash 等) 全部打包进一个 <code>cli.js</code> (~13MB)，<code>dependencies: {}</code> 为空。</p>
+                    </div>
+                    <div class="principle">
+                        <h4>4. 工具即能力</h4>
+                        <p>每个工具独立封装为 <code>Tool</code> 对象，支持权限校验、进度报告、MCP 桥接，松耦合可扩展。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 启动流程 -->
+        <section id="entrypoint" class="section">
+            <div class="section-header">
+                <span class="section-number">04</span>
+                <h1>启动流程</h1>
+            </div>
+
+            <div class="card">
+                <h3>完整启动链路</h3>
+                <div class="flow-chart">
+                    <div class="flow-step">
+                        <div class="flow-number">1</div>
+                        <div class="flow-content">
+                            <h4>cli.tsx — Bootstrap 入口</h4>
+                            <p>检查快速路径，最小化模块加载</p>
+                            <pre><code class="language-typescript">// entrypoints/cli.tsx
+async function main(): Promise&lt;void&gt; {
+  const args = process.argv.slice(2);
+
+  // 快速路径: --version 零模块加载
+  if (args.length === 1 &&
+      (args[0] === '--version' || args[0] === '-v')) {
+    console.log(`${MACRO.VERSION} (Claude Code)`);
+    return;
+  }
+
+  // 加载性能检查点
+  const { profileCheckpoint } = await import(
+    '../utils/startupProfiler.js'
+  );
+  profileCheckpoint('cli_entry');
+
+  // 特殊子命令快速路径:
+  // --daemon-worker, --background-session,
+  // --template-select 等
+
+  // 最终: 动态加载并执行 main
+  const { main: cliMain } = await import('../main.js');
+  await cliMain();
+}</code></pre>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">2</div>
+                        <div class="flow-content">
+                            <h4>main.tsx — 主函数</h4>
+                            <p>Commander 命令行设置、初始化、REPL 启动</p>
+                            <pre><code class="language-typescript">// main.tsx (简化)
+export async function main() {
+  profileCheckpoint('main_tsx_entry');
+
+  // 预取操作 (并行)
+  startMdmRawRead();
+  startKeychainPrefetch();
+
+  // Commander 设置
+  const program = new CommanderCommand()
+    .name('claude')
+    .option('-p, --print', '...')
+    .option('--model &lt;model&gt;', '...')
+    .option('--max-turns &lt;n&gt;', '...')
+    // ... 更多选项
+
+  // 初始化
+  await init();
+  initializeTelemetryAfterTrust();
+
+  // 非交互模式 (--print) 或 交互式 REPL
+  if (options.print) {
+    await runHeadless(prompt, options);
+  } else {
+    await launchRepl(root, appProps, replProps,
+                     renderAndRun);
+  }
+}</code></pre>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">3</div>
+                        <div class="flow-content">
+                            <h4>init.ts — 初始化</h4>
+                            <p>配置加载、环境安全、OAuth、遥测钩子</p>
+                            <pre><code class="language-typescript">// entrypoints/init.ts (概念)
+export const init = memoize(async () => {
+  // 加载配置
+  enableConfigs();
+  applyConfigEnvironmentVariables();
+
+  // 安全环境设置
+  setupGracefulShutdown();
+
+  // OAuth 令牌刷新
+  await refreshOAuthTokenIfNeeded();
+
+  // 遥测初始化
+  setupTelemetryHooks();
+
+  // 代理/MTLS 设置
+  configureProxy();
+});</code></pre>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">4</div>
+                        <div class="flow-content">
+                            <h4>replLauncher.tsx — REPL 挂载</h4>
+                            <p>动态导入 App 和 REPL，挂载 Ink 渲染树</p>
+                            <pre><code class="language-typescript">// replLauncher.tsx
+export async function launchRepl(
+  root: Root,
+  appProps: AppWrapperProps,
+  replProps: REPLProps,
+  renderAndRun: (root: Root, el: React.ReactNode)
+    =&gt; Promise&lt;void&gt;
+): Promise&lt;void&gt; {
+  const { App } = await import('./components/App.js');
+  const { REPL } = await import('./screens/REPL.js');
+
+  await renderAndRun(root,
+    &lt;App {...appProps}&gt;
+      &lt;REPL {...replProps} /&gt;
+    &lt;/App&gt;
+  );
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>启动流程时序图</h3>
+                <div class="sequence-diagram">
+                    <pre class="sequence">
+用户输入 `claude`
+    │
+    ▼
+┌─────────────────────────┐
+│     cli.tsx (入口)       │
+│ ├─ --version? → 直接输出  │
+│ ├─ --daemon?  → 启动守护  │
+│ ├─ --bg?      → 后台会话  │
+│ └─ 否则 → import main    │
+└──────────┬──────────────┘
+           ▼
+┌─────────────────────────┐
+│     main.tsx             │
+│ ├─ 并行预取 (MDM, 钥匙串) │
+│ ├─ Commander 解析参数     │
+│ ├─ init() 初始化         │
+│ ├─ 加载工具 & 命令       │
+│ ├─ --print? → 无头模式   │
+│ └─ 否则 → launchRepl()  │
+└──────────┬──────────────┘
+           ▼
+┌─────────────────────────┐
+│  replLauncher.tsx        │
+│ ├─ import App, REPL     │
+│ └─ Ink render()         │
+└──────────┬──────────────┘
+           ▼
+┌─────────────────────────┐
+│  REPL.tsx (交互界面)     │
+│  等待用户输入 ...        │
+└─────────────────────────┘</pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- Agent 核心循环 -->
+        <section id="query-engine" class="section">
+            <div class="section-header">
+                <span class="section-number">05</span>
+                <h1>Agent 核心循环</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>QueryEngine — 灵魂所在</h3>
+                <p><code>QueryEngine</code> 是 Claude Code 最核心的组件。它管理整个对话生命周期和会话状态，驱动多轮 "思考 → 工具调用 → 反馈" 循环，直到任务完成。</p>
+            </div>
+
+            <div class="card">
+                <h3>QueryEngine 配置</h3>
+                <pre><code class="language-typescript">// QueryEngine.ts
+export type QueryEngineConfig = {
+  cwd: string                        // 工作目录
+  tools: Tools                       // 可用工具列表
+  commands: Command[]                // 可用命令列表
+  mcpClients: MCPServerConnection[]  // MCP 客户端连接
+  agents: AgentDefinition[]          // Agent 定义
+  canUseTool: CanUseToolFn           // 工具权限检查函数
+  getAppState: () => AppState        // 获取应用状态
+  setAppState: (f) => void           // 更新应用状态
+  initialMessages?: Message[]        // 初始消息
+  readFileCache: FileStateCache      // 文件状态缓存
+  customSystemPrompt?: string        // 自定义系统提示
+  userSpecifiedModel?: string        // 用户指定模型
+  maxTurns?: number                  // 最大轮次
+  maxBudgetUsd?: number              // 最大预算 (美元)
+  thinkingConfig?: ThinkingConfig    // 思考配置
+  verbose?: boolean                  // 详细输出
+  // ... 更多配置
+}</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>核心循环流程</h3>
+                <div class="loop-diagram">
+                    <div class="loop-step active-step">
+                        <div class="loop-icon">💬</div>
+                        <h4>1. 接收用户输入</h4>
+                        <p><code>submitMessage(prompt)</code> 启动新一轮</p>
+                    </div>
+                    <div class="loop-arrow">→</div>
+                    <div class="loop-step">
+                        <div class="loop-icon">🧠</div>
+                        <h4>2. 构建上下文</h4>
+                        <p>系统提示 + 历史消息 + 工具描述</p>
+                    </div>
+                    <div class="loop-arrow">→</div>
+                    <div class="loop-step">
+                        <div class="loop-icon">📡</div>
+                        <h4>3. 调用 API</h4>
+                        <p>流式调用 Anthropic API</p>
+                    </div>
+                    <div class="loop-arrow">→</div>
+                    <div class="loop-step">
+                        <div class="loop-icon">⚙️</div>
+                        <h4>4. 执行工具</h4>
+                        <p>解析 tool_use → 权限检查 → 执行</p>
+                    </div>
+                    <div class="loop-arrow">→</div>
+                    <div class="loop-step">
+                        <div class="loop-icon">🔄</div>
+                        <h4>5. 反馈循环</h4>
+                        <p>工具结果 → 回到步骤 3</p>
+                    </div>
+                    <div class="loop-arrow">→</div>
+                    <div class="loop-step complete-step">
+                        <div class="loop-icon">✅</div>
+                        <h4>6. 完成</h4>
+                        <p>stop_reason=end_turn 或预算用尽</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>submitMessage 核心代码</h3>
+                <pre><code class="language-typescript">// QueryEngine.ts (简化)
+export class QueryEngine {
+  private mutableMessages: Message[]
+  private totalUsage: NonNullableUsage
+  private readFileState: FileStateCache
+
+  constructor(config: QueryEngineConfig) {
+    this.config = config
+    this.mutableMessages = config.initialMessages ?? []
+    this.totalUsage = EMPTY_USAGE
+  }
+
+  async *submitMessage(
+    prompt: string | ContentBlockParam[],
+    options?: { uuid?: string; isMeta?: boolean }
+  ): AsyncGenerator&lt;SDKMessage, void, unknown&gt; {
+    const { cwd, commands, tools, mcpClients,
+            maxTurns, maxBudgetUsd, canUseTool,
+            getAppState, setAppState } = this.config
+
+    setCwd(cwd)
+    const persistSession = !isSessionPersistenceDisabled()
+
+    // 包装权限检查以追踪拒绝
+    const wrappedCanUseTool = async (tool, input, ...) => {
+      const result = await canUseTool(tool, input, ...)
+      if (result.behavior !== 'allow') {
+        this.permissionDenials.push({
+          tool_name: tool.name,
+          tool_use_id: toolUseID,
+          tool_input: input,
+        })
+      }
+      return result
+    }
+
+    // 获取系统提示
+    const systemPrompt = await fetchSystemPromptParts(...)
+
+    // 核心: 调用 query() 进入多轮循环
+    for await (const message of query({
+      messages: this.mutableMessages,
+      systemPrompt,
+      tools: filteredTools,
+      model: mainLoopModel,
+      maxTurns,
+      abortController: this.abortController,
+      canUseTool: wrappedCanUseTool,
+    })) {
+      // 处理每条流式消息
+      yield* this.processMessage(message)
+    }
+
+    // 持久化会话
+    if (persistSession) {
+      await flushSessionStorage(...)
+    }
+  }
+}</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>关键概念：轮次 (Turn) 与预算</h3>
+                <div class="concept-grid">
+                    <div class="concept">
+                        <h4>maxTurns</h4>
+                        <p>限制 Agent 循环的最大轮次数。每次模型回复 + 工具执行算一轮。防止无限循环。</p>
+                    </div>
+                    <div class="concept">
+                        <h4>maxBudgetUsd</h4>
+                        <p>以美元为单位的预算上限。超出后停止 Agent 循环，避免成本失控。</p>
+                    </div>
+                    <div class="concept">
+                        <h4>AbortController</h4>
+                        <p>支持用户中断当前操作。取消信号传播到 API 调用和工具执行。</p>
+                    </div>
+                    <div class="concept">
+                        <h4>ThinkingConfig</h4>
+                        <p>配置模型的 "思考" 行为 (扩展思考/interleaved thinking)，可控制推理深度。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 工具系统 -->
+        <section id="tools" class="section">
+            <div class="section-header">
+                <span class="section-number">06</span>
+                <h1>工具系统</h1>
+            </div>
+
+            <div class="card">
+                <h3>Tool 接口定义</h3>
+                <pre><code class="language-typescript">// Tool.ts (简化)
+export type Tool = {
+  name: string                    // 工具名称
+  description: string             // 工具描述 (给模型看)
+  inputSchema: ToolInputJSONSchema // JSON Schema 输入定义
+
+  isEnabled(): boolean            // 是否启用
+  isReadOnly(): boolean           // 是否只读
+
+  // 核心执行函数
+  call(
+    input: Record&lt;string, unknown&gt;,
+    context: ToolUseContext
+  ): AsyncGenerator&lt;
+    ToolCallProgress,
+    ToolCallResult,
+    unknown
+  &gt;
+
+  // 权限检查
+  needsPermissions(
+    input: Record&lt;string, unknown&gt;
+  ): boolean
+
+  // MCP 信息 (若为 MCP 工具)
+  mcpInfo?: {
+    serverName: string
+    toolName: string
+  }
+}</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>工具注册表 <code>getAllBaseTools()</code></h3>
+                <pre><code class="language-typescript">// tools.ts (简化)
+export function getAllBaseTools(): Tools {
+  return [
+    AgentTool,          // 创建子 Agent
+    TaskOutputTool,     // 任务输出
+    BashTool,           // Bash 命令执行
+    GlobTool,           // 文件搜索 (glob 模式)
+    GrepTool,           // 内容搜索 (ripgrep)
+    FileReadTool,       // 文件读取
+    FileEditTool,       // 文件编辑
+    FileWriteTool,      // 文件写入
+    NotebookEditTool,   // Notebook 编辑
+    WebFetchTool,       // Web 抓取
+    WebSearchTool,      // Web 搜索
+    TodoWriteTool,      // 待办事项
+    TaskStopTool,       // 停止任务
+    AskUserQuestionTool,// 询问用户
+    SkillTool,          // 技能调用
+    EnterPlanModeTool,  // 进入计划模式
+    ExitPlanModeV2Tool, // 退出计划模式
+    SendMessageTool,    // Agent 间消息
+    ListMcpResourcesTool,// 列出 MCP 资源
+    ReadMcpResourceTool, // 读取 MCP 资源
+    // ... 更多条件工具
+  ]
+}</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>核心工具详解</h3>
+                <div class="tool-cards">
+                    <div class="tool-card bash">
+                        <h4>🖥️ BashTool</h4>
+                        <p>执行任意 Bash 命令。最强大也最危险的工具。</p>
+                        <ul>
+                            <li>执行 shell 命令并捕获输出</li>
+                            <li>支持超时控制</li>
+                            <li>需要用户授权 (非只读)</li>
+                            <li>自动检测破坏性命令</li>
+                        </ul>
+                    </div>
+                    <div class="tool-card file">
+                        <h4>📄 FileReadTool / FileWriteTool / FileEditTool</h4>
+                        <p>文件操作三件套。</p>
+                        <ul>
+                            <li><strong>Read</strong>: 读取文件内容，支持行范围</li>
+                            <li><strong>Write</strong>: 创建或覆写文件</li>
+                            <li><strong>Edit</strong>: 精确字符串替换 (old_string → new_string)</li>
+                        </ul>
+                    </div>
+                    <div class="tool-card search">
+                        <h4>🔍 GrepTool / GlobTool</h4>
+                        <p>代码搜索双引擎。</p>
+                        <ul>
+                            <li><strong>Grep</strong>: 基于 ripgrep 的内容搜索</li>
+                            <li><strong>Glob</strong>: 基于 glob 模式的文件名搜索</li>
+                            <li>内部版本通过嵌入式二进制加速</li>
+                        </ul>
+                    </div>
+                    <div class="tool-card agent">
+                        <h4>🤖 AgentTool</h4>
+                        <p>创建子 Agent 执行独立任务。</p>
+                        <ul>
+                            <li>Fork 一个新的 Agent 循环</li>
+                            <li>拥有独立的工具和权限集</li>
+                            <li>支持自定义 Agent 定义</li>
+                            <li>结果返回给父 Agent</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>条件工具加载机制</h3>
+                <p>Claude Code 使用多种方式条件性加载工具：</p>
+                <pre><code class="language-typescript">// 1. Feature Flag 门控 (编译时移除)
+const SleepTool = feature('PROACTIVE') || feature('KAIROS')
+  ? require('./tools/SleepTool/SleepTool.js').SleepTool
+  : null
+
+// 2. 环境变量门控
+const REPLTool = process.env.USER_TYPE === 'ant'
+  ? require('./tools/REPLTool/REPLTool.js').REPLTool
+  : null
+
+// 3. 运行时配置检查
+...(isWorktreeModeEnabled()
+  ? [EnterWorktreeTool, ExitWorktreeTool]
+  : [])
+
+// 4. 权限拒绝过滤
+export function filterToolsByDenyRules(
+  tools, permissionContext
+) {
+  return tools.filter(tool =>
+    !getDenyRuleForTool(permissionContext, tool)
+  )
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- 命令系统 -->
+        <section id="commands" class="section">
+            <div class="section-header">
+                <span class="section-number">07</span>
+                <h1>命令系统</h1>
+            </div>
+
+            <div class="card">
+                <h3>斜杠命令</h3>
+                <p>Claude Code 支持丰富的斜杠命令，用户可以在 REPL 中通过 <code>/command</code> 触发。</p>
+                <div class="command-grid">
+                    <div class="command-item">
+                        <code>/config</code>
+                        <span>管理配置设置</span>
+                    </div>
+                    <div class="command-item">
+                        <code>/mcp</code>
+                        <span>管理 MCP 服务器连接</span>
+                    </div>
+                    <div class="command-item">
+                        <code>/resume</code>
+                        <span>恢复之前的会话</span>
+                    </div>
+                    <div class="command-item">
+                        <code>/review</code>
+                        <span>代码审查</span>
+                    </div>
+                    <div class="command-item">
+                        <code>/skills</code>
+                        <span>技能管理</span>
+                    </div>
+                    <div class="command-item">
+                        <code>/commit</code>
+                        <span>Git 提交</span>
+                    </div>
+                    <div class="command-item">
+                        <code>/compact</code>
+                        <span>压缩对话历史</span>
+                    </div>
+                    <div class="command-item">
+                        <code>/clear</code>
+                        <span>清除对话</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>命令注册</h3>
+                <pre><code class="language-typescript">// commands.ts (概念)
+export function getCommands(cwd: string): Command[] {
+  return [
+    configCommand,
+    mcpCommand,
+    resumeCommand,
+    reviewCommand,
+    skillsCommand,
+    commitCommand,
+    compactCommand,
+    clearCommand,
+    // 动态加载插件命令
+    ...loadPluginCommands(),
+    // 动态加载技能命令
+    ...loadSkillCommands(),
+  ]
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- API 调用层 -->
+        <section id="api" class="section">
+            <div class="section-header">
+                <span class="section-number">08</span>
+                <h1>API 调用层</h1>
+            </div>
+
+            <div class="card">
+                <h3>API 请求流程</h3>
+                <pre><code class="language-typescript">// services/api/claude.ts (简化核心)
+import Anthropic from '@anthropic-ai/sdk'
+
+// 流式 API 调用
+async function* queryModel({
+  messages,
+  systemPrompt,
+  tools,
+  model,
+  thinkingConfig,
+  abortController,
+}: QueryParams): AsyncGenerator&lt;StreamEvent&gt; {
+  const client = new Anthropic()
+
+  // 构建请求参数
+  const params: BetaMessageStreamParams = {
+    model,
+    max_tokens: getModelMaxOutputTokens(model),
+    messages: normalizeMessagesForAPI(messages),
+    system: systemPrompt,
+    tools: tools.map(toolToAPISchema),
+    stream: true,
+    // 扩展思考配置
+    ...(thinkingConfig && {
+      thinking: thinkingConfig
+    }),
+    // Beta 特性
+    betas: getMergedBetas(model),
+  }
+
+  // 流式处理
+  const stream = await client.beta.messages.create(params)
+
+  for await (const event of stream) {
+    switch (event.type) {
+      case 'content_block_start':
+        yield { type: 'text_start', ... }
+        break
+      case 'content_block_delta':
+        yield { type: 'text_delta', ... }
+        break
+      case 'message_stop':
+        yield { type: 'complete', ... }
+        break
+    }
+  }
+}</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>关键特性</h3>
+                <div class="api-features">
+                    <div class="api-feature">
+                        <h4>流式响应</h4>
+                        <p>使用 <code>beta.messages.create</code> 的流式模式，逐块接收模型输出，实现实时渲染。</p>
+                    </div>
+                    <div class="api-feature">
+                        <h4>自动重试</h4>
+                        <p>通过 <code>categorizeRetryableAPIError</code> 分类错误，对可重试错误自动重试。</p>
+                    </div>
+                    <div class="api-feature">
+                        <h4>成本追踪</h4>
+                        <p><code>accumulateUsage</code> 和 <code>updateUsage</code> 实时追踪 token 用量和成本。</p>
+                    </div>
+                    <div class="api-feature">
+                        <h4>多供应商支持</h4>
+                        <p>通过 <code>getAPIProvider</code> 支持 Anthropic 直连、Bedrock、GCP 等。</p>
+                    </div>
+                    <div class="api-feature">
+                        <h4>模型选择</h4>
+                        <p>支持 Sonnet、Opus 等模型，通过 <code>getMainLoopModel</code> 和用户配置选择。</p>
+                    </div>
+                    <div class="api-feature">
+                        <h4>缓存策略</h4>
+                        <p>系统提示缓存 (<code>CacheScope</code>) 减少重复传输。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- MCP 集成 -->
+        <section id="mcp" class="section">
+            <div class="section-header">
+                <span class="section-number">09</span>
+                <h1>MCP 集成</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>Model Context Protocol</h3>
+                <p>MCP 是 Anthropic 推出的开放标准，允许 AI 应用连接外部数据源和工具。Claude Code 是 MCP 的深度集成者和参考实现。</p>
+            </div>
+
+            <div class="card">
+                <h3>MCP 客户端架构</h3>
+                <pre><code class="language-typescript">// services/mcp/client.ts (简化)
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from
+  '@modelcontextprotocol/sdk/client/stdio.js'
+import { SSEClientTransport } from
+  '@modelcontextprotocol/sdk/client/sse.js'
+import { StreamableHTTPClientTransport } from
+  '@modelcontextprotocol/sdk/client/streamableHttp.js'
+
+// 支持三种传输方式:
+// 1. Stdio  — 启动子进程通信
+// 2. SSE    — Server-Sent Events
+// 3. HTTP   — 可流式 HTTP
+
+// MCP 客户端连接管理
+async function connectMCPServer(
+  config: McpServerConfig
+): Promise&lt;MCPServerConnection&gt; {
+  const client = new Client({
+    name: 'claude-code',
+    version: MACRO.VERSION,
+  })
+
+  // 根据配置选择传输方式
+  let transport: Transport
+  if (config.type === 'stdio') {
+    transport = new StdioClientTransport({
+      command: config.command,
+      args: config.args,
+      env: config.env,
+    })
+  } else if (config.type === 'sse') {
+    transport = new SSEClientTransport(config.url)
+  } else {
+    transport = new StreamableHTTPClientTransport(
+      config.url
+    )
+  }
+
+  await client.connect(transport)
+
+  // 获取服务器工具列表
+  const tools = await client.listTools()
+
+  // 将 MCP 工具包装为 Claude Code Tool
+  const wrappedTools = tools.map(mcpTool =>
+    MCPTool.create(client, mcpTool)
+  )
+
+  return { client, tools: wrappedTools, ... }
+}</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>MCP 工具桥接</h3>
+                <p>每个 MCP 服务器的工具被包装为标准的 Claude Code <code>Tool</code> 对象：</p>
+                <pre><code class="language-typescript">// tools/MCPTool/MCPTool.ts (概念)
+export const MCPTool = {
+  create(client: Client, mcpTool: MCPToolDef): Tool {
+    return {
+      name: `mcp__${serverName}__${mcpTool.name}`,
+      description: mcpTool.description,
+      inputSchema: mcpTool.inputSchema,
+      mcpInfo: { serverName, toolName: mcpTool.name },
+
+      async *call(input, context) {
+        const result = await client.callTool({
+          name: mcpTool.name,
+          arguments: input,
+        })
+        return { content: result.content }
+      }
+    }
+  }
+}</code></pre>
+                <div class="note">
+                    <strong>命名规范：</strong>MCP 工具在 Claude Code 中的名称格式为 <code>mcp__&lt;服务器名&gt;__&lt;工具名&gt;</code>，便于区分和权限管控。
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>MCP 资源访问</h3>
+                <p>除了工具调用，Claude Code 还支持 MCP 资源读取：</p>
+                <ul>
+                    <li><strong>ListMcpResourcesTool</strong> — 列出 MCP 服务器提供的资源</li>
+                    <li><strong>ReadMcpResourceTool</strong> — 通过 URI 读取具体资源内容</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- 终端 UI -->
+        <section id="ui" class="section">
+            <div class="section-header">
+                <span class="section-number">10</span>
+                <h1>终端 UI (Ink)</h1>
+            </div>
+
+            <div class="card">
+                <h3>技术栈：React + Ink</h3>
+                <p>Claude Code 使用 <a href="https://github.com/vadimdemedes/ink" target="_blank">Ink</a> — 一个将 React 组件渲染到终端的库。这意味着整个终端 UI 都是用 React 组件编写的！</p>
+                <div class="tech-stack">
+                    <div class="tech-item">
+                        <strong>React</strong>
+                        <span>组件模型、状态管理、生命周期</span>
+                    </div>
+                    <div class="tech-item">
+                        <strong>Ink</strong>
+                        <span>终端渲染引擎，将 React 组件渲染为 ANSI 输出</span>
+                    </div>
+                    <div class="tech-item">
+                        <strong>Chalk</strong>
+                        <span>终端颜色和样式</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>组件层级</h3>
+                <pre><code class="language-plaintext">&lt;App&gt;                    # 顶级应用包装器
+  ├── Context Providers   # React Context 提供者
+  │   ├── AppStateProvider
+  │   ├── ThemeProvider
+  │   └── NotificationProvider
+  │
+  └── &lt;REPL&gt;              # 主 REPL 屏幕
+      ├── &lt;MessageList&gt;   # 消息渲染列表
+      │   ├── &lt;UserMessage&gt;
+      │   ├── &lt;AssistantMessage&gt;
+      │   └── &lt;ToolResult&gt;
+      ├── &lt;InputArea&gt;     # 用户输入区
+      ├── &lt;Spinner&gt;       # 加载指示器
+      ├── &lt;StatusBar&gt;     # 状态栏
+      └── &lt;PermissionDialog&gt; # 权限请求对话框</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>REPL 屏幕示意</h3>
+                <div class="terminal-preview">
+                    <div class="terminal-bar">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="terminal-title">claude — Terminal</span>
+                    </div>
+                    <div class="terminal-body">
+                        <div class="t-line t-system">╭─────────────────────────────────────────╮</div>
+                        <div class="t-line t-system">│  Claude Code v2.1.88                    │</div>
+                        <div class="t-line t-system">│  Working in: ~/my-project               │</div>
+                        <div class="t-line t-system">╰─────────────────────────────────────────╯</div>
+                        <div class="t-line"></div>
+                        <div class="t-line t-user"><span class="t-prompt">❯</span> 帮我分析这个项目的架构</div>
+                        <div class="t-line"></div>
+                        <div class="t-line t-assistant">我来分析一下项目架构。让我先看看目录结构。</div>
+                        <div class="t-line"></div>
+                        <div class="t-line t-tool">⚙️ BashTool: ls -la src/</div>
+                        <div class="t-line t-output">total 48</div>
+                        <div class="t-line t-output">drwxr-xr-x  12 user  staff  384 Apr 1 10:00 .</div>
+                        <div class="t-line t-output">-rw-r--r--   1 user  staff  2048 Apr 1 10:00 index.ts</div>
+                        <div class="t-line t-output">drwxr-xr-x   5 user  staff  160 Apr 1 10:00 components</div>
+                        <div class="t-line"></div>
+                        <div class="t-line t-assistant">这个项目采用了...</div>
+                        <div class="t-line"></div>
+                        <div class="t-line t-cursor"><span class="t-prompt">❯</span> <span class="cursor">▊</span></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 状态管理 -->
+        <section id="state" class="section">
+            <div class="section-header">
+                <span class="section-number">11</span>
+                <h1>状态管理</h1>
+            </div>
+
+            <div class="card">
+                <h3>双层状态架构</h3>
+                <p>Claude Code 采用双层状态管理：全局进程级状态和 React 组件级状态。</p>
+                <div class="state-layers">
+                    <div class="state-layer">
+                        <h4>全局状态 — <code>bootstrap/state.ts</code></h4>
+                        <p class="state-warning">⚠️ "DO NOT ADD MORE STATE HERE" — 源码中的注释</p>
+                        <pre><code class="language-typescript">type State = {
+  originalCwd: string        // 原始工作目录
+  projectRoot: string        // 项目根目录 (启动时确定)
+  totalCostUSD: number       // 累计花费 (美元)
+  totalAPIDuration: number   // 累计 API 耗时
+  totalToolDuration: number  // 累计工具耗时
+  startTime: number          // 会话开始时间
+  cwd: string                // 当前工作目录
+  modelUsage: { [model]: ModelUsage } // 模型用量
+  isInteractive: boolean     // 是否交互模式
+  sessionId: SessionId       // 会话 ID
+
+  // 遥测相关
+  meter: Meter | null
+  sessionCounter: AttributedCounter | null
+  costCounter: AttributedCounter | null
+  tokenCounter: AttributedCounter | null
+
+  // 钩子注册
+  hookMatchers: RegisteredHookMatcher[]
+  // ... 更多字段
+}</code></pre>
+                    </div>
+                    <div class="state-layer">
+                        <h4>应用状态 — <code>state/AppState.tsx</code></h4>
+                        <p>React Context 驱动的应用状态，管理 UI 相关状态。</p>
+                        <pre><code class="language-typescript">// 通过 React Context 提供
+const { getAppState, setAppState } = useAppState()
+
+// QueryEngine 通过注入访问
+const engine = new QueryEngine({
+  getAppState: () => appState,
+  setAppState: (fn) => setAppState(fn),
+  // ...
+})</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>会话持久化</h3>
+                <pre><code class="language-typescript">// utils/sessionStorage.ts (概念)
+// 会话结束时持久化
+await flushSessionStorage({
+  messages: this.mutableMessages,
+  sessionId: getSessionId(),
+  usage: this.totalUsage,
+})
+
+// 恢复会话 (/resume 命令)
+const session = await loadSession(sessionId)
+const engine = new QueryEngine({
+  initialMessages: session.messages,
+  // ...
+})</code></pre>
+            </div>
+        </section>
+
+        <!-- 权限系统 -->
+        <section id="permissions" class="section">
+            <div class="section-header">
+                <span class="section-number">12</span>
+                <h1>权限系统</h1>
+            </div>
+
+            <div class="card">
+                <h3>权限检查流程</h3>
+                <div class="permission-flow">
+                    <div class="perm-step">
+                        <h4>1. 工具声明</h4>
+                        <p>每个 Tool 通过 <code>needsPermissions(input)</code> 声明是否需要权限。</p>
+                    </div>
+                    <div class="perm-arrow">→</div>
+                    <div class="perm-step">
+                        <h4>2. 拒绝规则匹配</h4>
+                        <p><code>getDenyRuleForTool</code> 检查是否有全局拒绝规则。</p>
+                    </div>
+                    <div class="perm-arrow">→</div>
+                    <div class="perm-step">
+                        <h4>3. canUseTool 检查</h4>
+                        <p>运行时权限函数判断 allow / deny / ask。</p>
+                    </div>
+                    <div class="perm-arrow">→</div>
+                    <div class="perm-step">
+                        <h4>4. 用户确认</h4>
+                        <p>如需用户确认，弹出 PermissionDialog。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>权限模式</h3>
+                <pre><code class="language-typescript">// types/permissions.ts
+export type PermissionMode =
+  | 'default'      // 默认：敏感操作需确认
+  | 'plan'         // 计划模式：只读，不执行
+  | 'bypassAll'    // 全部跳过 (dangerously-skip)
+
+export type PermissionResult =
+  | { behavior: 'allow' }
+  | { behavior: 'deny'; message: string }
+  | { behavior: 'ask'; message: string }</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>拒绝追踪</h3>
+                <p>QueryEngine 包装了 <code>canUseTool</code> 来追踪所有权限拒绝：</p>
+                <pre><code class="language-typescript">const wrappedCanUseTool = async (tool, input, ...) => {
+  const result = await canUseTool(tool, input, ...)
+
+  if (result.behavior !== 'allow') {
+    this.permissionDenials.push({
+      tool_name: tool.name,
+      tool_use_id: toolUseID,
+      tool_input: input,
+    })
+  }
+
+  return result
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- Feature Flags -->
+        <section id="features" class="section">
+            <div class="section-header">
+                <span class="section-number">13</span>
+                <h1>Feature Flags</h1>
+            </div>
+
+            <div class="card">
+                <h3>编译时特性门控</h3>
+                <p>Claude Code 大量使用 <code>feature()</code> 函数（来自 <code>bun:bundle</code>）实现编译时死代码消除。</p>
+                <pre><code class="language-typescript">import { feature } from 'bun:bundle'
+
+// 编译时求值：如果 flag 为 false，整个分支被移除
+if (feature('COORDINATOR_MODE')) {
+  // 这段代码只在内部版本中存在
+  const coordinatorModule = require('./coordinator/...')
+}
+
+// 条件导入模式
+const SleepTool = feature('PROACTIVE')
+  ? require('./tools/SleepTool/SleepTool.js').SleepTool
+  : null</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>已知 Feature Flags</h3>
+                <div class="flag-grid">
+                    <div class="flag-item">
+                        <code>COORDINATOR_MODE</code>
+                        <span>多 Agent 协调模式</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>KAIROS</code>
+                        <span>助手模式 (后台常驻)</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>PROACTIVE</code>
+                        <span>主动式行为</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>VOICE_MODE</code>
+                        <span>语音交互</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>DAEMON</code>
+                        <span>守护进程模式</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>AGENT_TRIGGERS</code>
+                        <span>定时任务触发</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>HISTORY_SNIP</code>
+                        <span>历史裁剪压缩</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>WEB_BROWSER_TOOL</code>
+                        <span>Web 浏览器工具</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>CONTEXT_COLLAPSE</code>
+                        <span>上下文折叠</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>TERMINAL_PANEL</code>
+                        <span>终端面板捕获</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>UDS_INBOX</code>
+                        <span>Unix Domain Socket 通信</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>WORKFLOW_SCRIPTS</code>
+                        <span>工作流脚本</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>KAIROS_GITHUB_WEBHOOKS</code>
+                        <span>GitHub Webhook 订阅</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>ABLATION_BASELINE</code>
+                        <span>消融实验基线</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>MONITOR_TOOL</code>
+                        <span>监控工具</span>
+                    </div>
+                    <div class="flag-item">
+                        <code>OVERFLOW_TEST_TOOL</code>
+                        <span>溢出测试</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 插件与技能 -->
+        <section id="plugins" class="section">
+            <div class="section-header">
+                <span class="section-number">14</span>
+                <h1>插件与技能</h1>
+            </div>
+
+            <div class="card">
+                <h3>插件系统</h3>
+                <p>Claude Code 支持通过插件扩展功能。插件可以注册新的命令、工具和钩子。</p>
+                <pre><code class="language-typescript">// plugins/ 目录结构
+src/plugins/
+├── index.ts            // 插件初始化
+├── loader.ts           // 插件加载器
+└── types.ts            // 插件类型定义
+
+// 内置插件初始化
+initBuiltinPlugins()
+
+// 动态加载插件命令
+const pluginCommands = loadPluginCommands()
+
+// 钩子系统 (Plugin Hooks)
+type PluginHookMatcher = {
+  event: HookEvent
+  handler: (context: HookContext) => Promise&lt;void&gt;
+}</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>技能系统</h3>
+                <p>技能 (Skills) 是更高层次的扩展机制，可以提供领域特定的知识和工作流。</p>
+                <pre><code class="language-typescript">// skills/ 目录
+src/skills/
+├── index.ts
+└── skillLoader.ts
+
+// SkillTool — 调用技能的工具
+// tools/SkillTool/SkillTool.ts
+
+// 初始化内置技能
+initBundledSkills()
+
+// 技能发现追踪
+private discoveredSkillNames = new Set&lt;string&gt;()
+
+// 在 QueryEngine 每轮开始时清理
+this.discoveredSkillNames.clear()</code></pre>
+            </div>
+        </section>
+
+        <!-- 多 Agent 协作 -->
+        <section id="swarm" class="section">
+            <div class="section-header">
+                <span class="section-number">15</span>
+                <h1>多 Agent 协作</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>Coordinator 模式</h3>
+                <p>Claude Code 支持 <strong>Coordinator 模式</strong>，一个主 Agent 可以创建和协调多个子 Agent 并行工作。</p>
+            </div>
+
+            <div class="card">
+                <h3>协调架构</h3>
+                <div class="coordinator-diagram">
+                    <div class="coord-node main">
+                        <h4>Coordinator (主 Agent)</h4>
+                        <p>分析任务、分配子任务、汇总结果</p>
+                    </div>
+                    <div class="coord-arrows">
+                        <div class="coord-arrow">↙</div>
+                        <div class="coord-arrow">↓</div>
+                        <div class="coord-arrow">↘</div>
+                    </div>
+                    <div class="coord-workers">
+                        <div class="coord-node worker">
+                            <h4>Worker 1</h4>
+                            <p>文件分析</p>
+                        </div>
+                        <div class="coord-node worker">
+                            <h4>Worker 2</h4>
+                            <p>代码修改</p>
+                        </div>
+                        <div class="coord-node worker">
+                            <h4>Worker 3</h4>
+                            <p>测试运行</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Swarm (蜂群) 模式</h3>
+                <pre><code class="language-typescript">// utils/swarm/ — 多 Agent 后端
+src/utils/swarm/
+├── reconnection.ts        // 重连逻辑
+├── teammatePromptAddendum.ts  // 队友提示
+└── backends/
+    ├── teammateModeSnapshot.ts
+    ├── tmux.ts            // tmux 多窗格后端
+    ├── iterm.ts           // iTerm2 后端
+    └── inProcess.ts       // 进程内后端
+
+// 相关工具
+TeamCreateTool  // 创建队友
+TeamDeleteTool  // 删除队友
+SendMessageTool // Agent 间通信
+ListPeersTool   // 列出对等 Agent</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>多窗格后端</h3>
+                <p>Swarm 模式支持多种后端来管理多个 Agent 实例：</p>
+                <div class="backend-list">
+                    <div class="backend-item">
+                        <strong>tmux</strong> — 通过 tmux 分割终端窗格，每个 Agent 一个窗格
+                    </div>
+                    <div class="backend-item">
+                        <strong>iTerm2</strong> — 利用 iTerm2 的 API 创建分割窗格
+                    </div>
+                    <div class="backend-item">
+                        <strong>In-Process</strong> — 在同一进程内启动多个 Agent 循环
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 依赖分析 -->
+        <section id="deps" class="section">
+            <div class="section-header">
+                <span class="section-number">16</span>
+                <h1>依赖分析</h1>
+            </div>
+
+            <div class="card">
+                <h3>核心依赖一览</h3>
+                <table class="dep-table">
+                    <thead>
+                        <tr>
+                            <th>依赖</th>
+                            <th>用途</th>
+                            <th>分类</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>@anthropic-ai/sdk</code></td>
+                            <td>Anthropic API 客户端 SDK</td>
+                            <td>核心</td>
+                        </tr>
+                        <tr>
+                            <td><code>@modelcontextprotocol/sdk</code></td>
+                            <td>MCP 协议 SDK (客户端/传输)</td>
+                            <td>核心</td>
+                        </tr>
+                        <tr>
+                            <td><code>react</code></td>
+                            <td>UI 组件模型</td>
+                            <td>UI</td>
+                        </tr>
+                        <tr>
+                            <td><code>ink</code></td>
+                            <td>React → 终端渲染</td>
+                            <td>UI</td>
+                        </tr>
+                        <tr>
+                            <td><code>@commander-js/extra-typings</code></td>
+                            <td>CLI 参数解析</td>
+                            <td>CLI</td>
+                        </tr>
+                        <tr>
+                            <td><code>chalk</code></td>
+                            <td>终端颜色</td>
+                            <td>UI</td>
+                        </tr>
+                        <tr>
+                            <td><code>lodash-es</code></td>
+                            <td>工具函数集</td>
+                            <td>通用</td>
+                        </tr>
+                        <tr>
+                            <td><code>zod</code></td>
+                            <td>运行时类型校验</td>
+                            <td>通用</td>
+                        </tr>
+                        <tr>
+                            <td><code>@opentelemetry/*</code></td>
+                            <td>遥测 (日志、指标、追踪)</td>
+                            <td>监控</td>
+                        </tr>
+                        <tr>
+                            <td><code>@img/sharp-*</code></td>
+                            <td>图像处理 (可选，平台特定)</td>
+                            <td>媒体</td>
+                        </tr>
+                        <tr>
+                            <td><code>strip-ansi</code></td>
+                            <td>移除 ANSI 转义序列</td>
+                            <td>工具</td>
+                        </tr>
+                        <tr>
+                            <td><code>p-map</code></td>
+                            <td>并发映射</td>
+                            <td>工具</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="note">
+                    <strong>注意：</strong>所有依赖都被打包进 <code>cli.js</code>，npm 包的 <code>dependencies</code> 字段为空 <code>{}</code>。用户安装时不需要下载任何额外依赖。
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>构建工具链</h3>
+                <div class="build-info">
+                    <div class="build-item">
+                        <h4>Bun Bundler</h4>
+                        <p>使用 Bun 的打包器将所有代码和依赖打包为单文件 ESM。<code>bun:bundle</code> 提供 <code>feature()</code> 宏实现编译时特性门控。</p>
+                    </div>
+                    <div class="build-item">
+                        <h4>MACRO.VERSION</h4>
+                        <p>版本号在构建时内联替换（类似 C 宏）。</p>
+                    </div>
+                    <div class="build-item">
+                        <h4>Dead Code Elimination</h4>
+                        <p>通过 <code>feature()</code> 返回 <code>false</code> 时，整个 if 分支在打包时被移除，减小产物体积。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 总结 -->
+        <section id="summary" class="section">
+            <div class="section-header">
+                <span class="section-number">17</span>
+                <h1>总结与启示</h1>
+            </div>
+
+            <div class="card">
+                <h3>架构亮点</h3>
+                <div class="insight-grid">
+                    <div class="insight">
+                        <h4>1. 极致的性能优化</h4>
+                        <p>从冷启动的快速路径（<code>--version</code> 零模块加载），到并行预取（MDM、钥匙串、OAuth），到编译时死代码消除，处处可见性能导向的设计。</p>
+                    </div>
+                    <div class="insight">
+                        <h4>2. 优雅的工具抽象</h4>
+                        <p>统一的 <code>Tool</code> 接口让内置工具、MCP 工具、插件工具共享同一权限和执行框架。Generator 模式支持进度流式报告。</p>
+                    </div>
+                    <div class="insight">
+                        <h4>3. 巧妙的 MCP 集成</h4>
+                        <p>MCP 工具被透明包装为标准 Tool，对模型来说 MCP 工具和内置工具没有区别。命名前缀 <code>mcp__server__tool</code> 实现优雅的命名空间隔离。</p>
+                    </div>
+                    <div class="insight">
+                        <h4>4. React 终端 UI</h4>
+                        <p>用 React + Ink 构建终端 UI 是非常创新的选择，带来了组件化、声明式渲染、Context 状态管理等现代前端优势。</p>
+                    </div>
+                    <div class="insight">
+                        <h4>5. 渐进式功能加载</h4>
+                        <p>Feature Flags + 条件 require + 编译时消除，实现了同一代码库支持多个产品变体（公开版 vs 内部版）。</p>
+                    </div>
+                    <div class="insight">
+                        <h4>6. 安全至上</h4>
+                        <p>细粒度权限系统、拒绝追踪、破坏性命令检测，在给予 AI 强大能力的同时保持安全边界。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>学习建议</h3>
+                <div class="learning-path">
+                    <div class="path-step">
+                        <div class="path-number">1</div>
+                        <div class="path-content">
+                            <h4>从入口开始</h4>
+                            <p>阅读 <code>cli.tsx</code> → <code>main.tsx</code> → <code>replLauncher.tsx</code>，理解启动链路。</p>
+                        </div>
+                    </div>
+                    <div class="path-step">
+                        <div class="path-number">2</div>
+                        <div class="path-content">
+                            <h4>深入核心引擎</h4>
+                            <p>研究 <code>QueryEngine.ts</code> 和 <code>query.ts</code>，理解 Agent 循环机制。</p>
+                        </div>
+                    </div>
+                    <div class="path-step">
+                        <div class="path-number">3</div>
+                        <div class="path-content">
+                            <h4>理解工具体系</h4>
+                            <p>阅读 <code>Tool.ts</code>、<code>tools.ts</code>，然后选几个具体工具 (如 BashTool) 深入。</p>
+                        </div>
+                    </div>
+                    <div class="path-step">
+                        <div class="path-number">4</div>
+                        <div class="path-content">
+                            <h4>探索 API 层</h4>
+                            <p>研究 <code>services/api/claude.ts</code>，理解与 Anthropic API 的交互方式。</p>
+                        </div>
+                    </div>
+                    <div class="path-step">
+                        <div class="path-number">5</div>
+                        <div class="path-content">
+                            <h4>学习 MCP 集成</h4>
+                            <p>阅读 <code>services/mcp/client.ts</code>，理解 MCP 协议在实际项目中的应用。</p>
+                        </div>
+                    </div>
+                    <div class="path-step">
+                        <div class="path-number">6</div>
+                        <div class="path-content">
+                            <h4>探索高级特性</h4>
+                            <p>研究 Coordinator 模式、Swarm 协作、Plugin/Skill 系统等进阶功能。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>关键文件速查</h3>
+                <table class="dep-table">
+                    <thead>
+                        <tr>
+                            <th>文件</th>
+                            <th>核心作用</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><code>entrypoints/cli.tsx</code></td><td>CLI 入口，快速路径</td></tr>
+                        <tr><td><code>main.tsx</code></td><td>主函数，Commander 设置</td></tr>
+                        <tr><td><code>entrypoints/init.ts</code></td><td>初始化所有子系统</td></tr>
+                        <tr><td><code>replLauncher.tsx</code></td><td>REPL 挂载点</td></tr>
+                        <tr><td><code>QueryEngine.ts</code></td><td>Agent 核心循环</td></tr>
+                        <tr><td><code>query.ts</code></td><td>底层查询执行</td></tr>
+                        <tr><td><code>Tool.ts</code></td><td>工具类型定义</td></tr>
+                        <tr><td><code>tools.ts</code></td><td>工具注册表</td></tr>
+                        <tr><td><code>commands.ts</code></td><td>命令注册表</td></tr>
+                        <tr><td><code>services/api/claude.ts</code></td><td>Anthropic API 调用</td></tr>
+                        <tr><td><code>services/mcp/client.ts</code></td><td>MCP 客户端</td></tr>
+                        <tr><td><code>bootstrap/state.ts</code></td><td>全局状态</td></tr>
+                        <tr><td><code>screens/REPL.tsx</code></td><td>主 REPL 屏幕</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card">
+                <p style="text-align: center; color: #888; margin: 0;">
+                    基于 <code>@anthropic-ai/claude-code</code> v2.1.88 源码还原分析 · 仅供研究学习<br>
+                    源码版权归 <a href="https://www.anthropic.com" target="_blank">Anthropic</a> 所有
+                </p>
+            </div>
+        </section>
+    </main>
+
+    <button class="scroll-top" id="scrollTop" title="回到顶部">↑</button>
+
+    <script src="app.js"></script>
+</body>
+</html>
