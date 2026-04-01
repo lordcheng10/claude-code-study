@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const sidebar = document.getElementById('sidebar');
   const sidebarToggle = document.getElementById('sidebarToggle');
-  const scrollTop = document.getElementById('scrollTop');
+  const scrollTopBtn = document.getElementById('scrollTop');
   const navLinks = document.querySelectorAll('.nav-link');
   const sections = document.querySelectorAll('.section');
 
@@ -17,37 +17,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  const observerOptions = {
-    rootMargin: '-80px 0px -60% 0px',
-    threshold: 0,
-  };
-
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        navLinks.forEach((link) => link.classList.remove('active'));
-        const activeLink = document.querySelector(
-          `.nav-link[data-section="${entry.target.id}"]`
-        );
-        if (activeLink) {
-          activeLink.classList.add('active');
-          activeLink.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          navLinks.forEach((l) => l.classList.remove('active'));
+          const active = document.querySelector(
+            `.nav-link[data-section="${entry.target.id}"]`
+          );
+          if (active) {
+            active.classList.add('active');
+            active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          }
         }
-      }
-    });
-  }, observerOptions);
+      });
+    },
+    { rootMargin: '-80px 0px -60% 0px', threshold: 0 }
+  );
 
-  sections.forEach((section) => observer.observe(section));
+  sections.forEach((s) => observer.observe(s));
 
   window.addEventListener('scroll', () => {
-    if (window.scrollY > 400) {
-      scrollTop.classList.add('visible');
-    } else {
-      scrollTop.classList.remove('visible');
-    }
+    scrollTopBtn.classList.toggle('visible', window.scrollY > 400);
   });
 
-  scrollTop.addEventListener('click', () => {
+  scrollTopBtn.addEventListener('click', () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
