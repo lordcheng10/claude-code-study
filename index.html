@@ -43,6 +43,14 @@
             <li><a href="#state-mgmt" class="nav-link" data-section="state-mgmt">状态管理</a></li>
             <li><a href="#feature-flags" class="nav-link" data-section="feature-flags">Feature Flags</a></li>
             <li><a href="#multi-agent" class="nav-link" data-section="multi-agent">多 Agent 协作</a></li>
+
+            <li class="nav-group-title">第三部分：源码深挖</li>
+            <li><a href="#prompt-arch" class="nav-link" data-section="prompt-arch">系统提示词架构</a></li>
+            <li><a href="#agent-dispatch" class="nav-link" data-section="agent-dispatch">Agent 调度链</a></li>
+            <li><a href="#builtin-agents" class="nav-link" data-section="builtin-agents">内置 Agent 深挖</a></li>
+            <li><a href="#ecosystem" class="nav-link" data-section="ecosystem">Skill/Plugin/Hook 生态</a></li>
+            <li><a href="#tool-pipeline" class="nav-link" data-section="tool-pipeline">工具执行管线</a></li>
+            <li><a href="#moat" class="nav-link" data-section="moat">护城河分析</a></li>
             <li><a href="#summary" class="nav-link" data-section="summary">总结与启示</a></li>
         </ul>
     </nav>
@@ -1286,10 +1294,629 @@ const SleepTool = feature('KAIROS')
             </div>
         </section>
 
+        <!-- ============================== -->
+        <!-- 第三部分：源码深挖              -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">第三部分</span>
+            <h1 class="part-title">源码深挖</h1>
+            <p class="part-desc">基于 Xiao Tan 的 Claude Code 源码深度研究报告，深入剖析系统内部机制</p>
+        </div>
+
+        <!-- 系统提示词架构 -->
+        <section id="prompt-arch" class="section">
+            <div class="section-header">
+                <span class="section-number">23</span>
+                <h1>系统提示词架构</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>Prompt 不是文本，是编排器</h3>
+                <p>Claude Code 的系统提示词不是一段静态字符串，而是一个 <strong>system prompt assembly architecture</strong>。核心文件 <code>src/constants/prompts.ts</code> 承担了主系统提示词的总装配：环境信息注入、工具规范注入、安全规范注入、MCP 指令注入、记忆注入等。</p>
+            </div>
+            <div class="card">
+                <h3>静态前缀 vs 动态后缀</h3>
+                <p><code>getSystemPrompt()</code> 的核心设计是先构造静态部分（适合 cache），再拼接动态部分（每次会话可变）：</p>
+                <div class="prompt-split">
+                    <div class="prompt-section static-section">
+                        <h4>静态前缀（可缓存）</h4>
+                        <ul>
+                            <li><code>getSimpleIntroSection()</code> — 身份与基础定位</li>
+                            <li><code>getSimpleSystemSection()</code> — 运行时规则</li>
+                            <li><code>getSimpleDoingTasksSection()</code> — 做任务哲学</li>
+                            <li><code>getActionsSection()</code> — 风险动作规范</li>
+                            <li><code>getUsingYourToolsSection()</code> — 工具使用规范</li>
+                            <li><code>getSimpleToneAndStyleSection()</code> — 语气风格</li>
+                            <li><code>getOutputEfficiencySection()</code> — 输出效率</li>
+                        </ul>
+                    </div>
+                    <div class="prompt-boundary">
+                        <div class="boundary-line"></div>
+                        <span class="boundary-label">SYSTEM_PROMPT_DYNAMIC_BOUNDARY</span>
+                        <div class="boundary-line"></div>
+                    </div>
+                    <div class="prompt-section dynamic-section">
+                        <h4>动态后缀（会话特定）</h4>
+                        <ul>
+                            <li>Session-specific guidance</li>
+                            <li>Memory prompt (CLAUDE.md)</li>
+                            <li>环境信息 (OS, Git, CWD...)</li>
+                            <li>MCP instructions</li>
+                            <li>输出语言与风格</li>
+                            <li>Scratchpad 说明</li>
+                            <li>Token budget / brief 模式</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Prompt Cache Boundary：基础设施级思维</h3>
+                <p>源码中明确存在 <code>SYSTEM_PROMPT_DYNAMIC_BOUNDARY</code> 标记，并有注释说明：边界前尽量可 cache，边界后是用户/会话特定内容，不能乱改否则会破坏缓存逻辑。</p>
+                <div class="note">
+                    <strong>关键洞察：</strong>这说明 Claude Code 已经在做 <strong>Prompt assembly with cache economics</strong> —— 连 system prompt 的 token 成本与缓存命中都做了工程化优化。
+                </div>
+            </div>
+            <div class="card">
+                <h3>各 Prompt 模块的行为价值</h3>
+                <div class="prompt-module-grid">
+                    <div class="prompt-module">
+                        <h4>身份定位</h4>
+                        <p class="module-file">getSimpleIntroSection()</p>
+                        <ul>
+                            <li>定义自己是 interactive agent</li>
+                            <li>注入 CYBER_RISK_INSTRUCTION</li>
+                            <li>禁止随意生成或猜 URL</li>
+                        </ul>
+                    </div>
+                    <div class="prompt-module">
+                        <h4>运行时规则</h4>
+                        <p class="module-file">getSimpleSystemSection()</p>
+                        <ul>
+                            <li>工具运行在 permission mode 下</li>
+                            <li>被拒绝后不能原样重试</li>
+                            <li>外部结果可能含 prompt injection</li>
+                            <li>上下文会被自动压缩</li>
+                        </ul>
+                    </div>
+                    <div class="prompt-module">
+                        <h4>做任务哲学</h4>
+                        <p class="module-file">getSimpleDoingTasksSection()</p>
+                        <ul>
+                            <li>不要加用户没要求的功能</li>
+                            <li>不要过度抽象和瞎重构</li>
+                            <li>先读代码再改代码</li>
+                            <li>方法失败先诊断再换策略</li>
+                            <li>删除确认没用的东西</li>
+                        </ul>
+                    </div>
+                    <div class="prompt-module">
+                        <h4>风险动作</h4>
+                        <p class="module-file">getActionsSection()</p>
+                        <ul>
+                            <li>定义 destructive / hard-to-reverse 操作</li>
+                            <li>修改共享状态需确认</li>
+                            <li>不要用 destructive 当捷径</li>
+                            <li>blast radius 思维编码进 prompt</li>
+                        </ul>
+                    </div>
+                    <div class="prompt-module">
+                        <h4>工具使用语法</h4>
+                        <p class="module-file">getUsingYourToolsSection()</p>
+                        <ul>
+                            <li>读文件用 FileRead，不用 cat</li>
+                            <li>改文件用 FileEdit，不用 sed</li>
+                            <li>无依赖的工具调用要并行</li>
+                            <li>定义了 tool usage grammar</li>
+                        </ul>
+                    </div>
+                    <div class="prompt-module">
+                        <h4>会话局部指令</h4>
+                        <p class="module-file">getSessionSpecificGuidanceSection()</p>
+                        <ul>
+                            <li>根据当前工具集动态注入约束</li>
+                            <li>Explore/Plan agents 可用性</li>
+                            <li>Verification agent 强制验证</li>
+                            <li>不是"总规则"而是"总+局部规则"</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="note">
+                    <strong>本质洞察：</strong>"做任务哲学"这段不是 prompt 细节，而是 <strong>Anthropic 对 AI 工程师行为规范的制度化表达</strong>。很多 coding agent 不稳定，不是不会写代码，而是行为发散。这一段就是为了解决行为漂移。
+                </div>
+            </div>
+        </section>
+
+        <!-- Agent 调度链 -->
+        <section id="agent-dispatch" class="section">
+            <div class="section-header">
+                <span class="section-number">24</span>
+                <h1>Agent 调度链</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>从 AgentTool 到 runAgent 再到 query</h3>
+                <p>Agent 调度不是简单的"转发到子 agent"，而是一条完整的 <strong>subagent runtime pipeline</strong>：调度分流 → 上下文构造 → 生命周期管理 → 模型主循环。</p>
+            </div>
+            <div class="card">
+                <h3>完整调度链路（14 步）</h3>
+                <div class="dispatch-chain">
+                    <div class="chain-step"><span class="chain-num">1</span> 主模型决定调用 Agent 工具</div>
+                    <div class="chain-step"><span class="chain-num">2</span> AgentTool.call() 解析输入参数</div>
+                    <div class="chain-step"><span class="chain-num">3</span> 判断: teammate / fork / built-in / background / worktree / remote</div>
+                    <div class="chain-step"><span class="chain-num">4</span> 选择 agent definition</div>
+                    <div class="chain-step"><span class="chain-num">5</span> 构造 prompt messages</div>
+                    <div class="chain-step"><span class="chain-num">6</span> 构造 / 继承 system prompt</div>
+                    <div class="chain-step"><span class="chain-num">7</span> 组装工具池</div>
+                    <div class="chain-step"><span class="chain-num">8</span> 创建 agent-specific ToolUseContext</div>
+                    <div class="chain-step"><span class="chain-num">9</span> 注册 hooks / skills / MCP servers</div>
+                    <div class="chain-step"><span class="chain-num">10</span> 调用 runAgent()</div>
+                    <div class="chain-step"><span class="chain-num">11</span> runAgent() 内部调用 query()</div>
+                    <div class="chain-step"><span class="chain-num">12</span> query() 产出消息流</div>
+                    <div class="chain-step"><span class="chain-num">13</span> runAgent 记录 transcript、处理 lifecycle</div>
+                    <div class="chain-step"><span class="chain-num">14</span> AgentTool 汇总结果或走异步通知</div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Fork Path vs Normal Path</h3>
+                <div class="path-comparison">
+                    <div class="path-card fork-path">
+                        <h4>Fork Path（继承上下文）</h4>
+                        <ul>
+                            <li>省略 subagent_type 且 fork feature 开启</li>
+                            <li>继承主线程 system prompt</li>
+                            <li>用 <code>buildForkedMessages()</code> 构造</li>
+                            <li>工具集与父线程一致</li>
+                            <li><strong>共享 prompt cache，不白烧 token</strong></li>
+                            <li><code>useExactTools = true</code></li>
+                        </ul>
+                        <div class="path-best">适合: 研究任务、大量中间输出的实现任务</div>
+                    </div>
+                    <div class="path-card normal-path">
+                        <h4>Normal Path（独立上下文）</h4>
+                        <ul>
+                            <li>明确指定 built-in / custom agent type</li>
+                            <li>基于 agentDefinition 生成新 system prompt</li>
+                            <li>只给该 agent 所需上下文</li>
+                            <li>走该 agent 的 tool restrictions</li>
+                            <li><strong>独立权限和工具池</strong></li>
+                            <li>定制化的角色约束</li>
+                        </ul>
+                        <div class="path-best">适合: 专职 agent（Explore / Plan / Verify）</div>
+                    </div>
+                </div>
+                <div class="note">
+                    <strong>Cache 优化洞察：</strong>Fork path 会尽量保持 API request prefix byte-identical，提高 prompt cache 命中。普通人只想"子任务能跑"，Claude Code 想的是"子任务能跑，而且尽量复用主线程 cache"。这就是产品级系统思维。
+                </div>
+            </div>
+            <div class="card">
+                <h3>三层分工</h3>
+                <div class="layer-stack">
+                    <div class="layer-item layer-top">
+                        <h4>AgentTool</h4>
+                        <p>调度与模式分流 — 解析参数、判断 fork/normal/background/remote、构造上下文</p>
+                    </div>
+                    <div class="layer-item layer-mid">
+                        <h4>runAgent()</h4>
+                        <p>子 Agent 上下文构造与生命周期管理 — MCP servers、hooks、skills、permission、cleanup</p>
+                    </div>
+                    <div class="layer-item layer-bot">
+                        <h4>query()</h4>
+                        <p>模型消息流与 tool-calling 主循环 — 真正的对话引擎</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Background vs Foreground 生命周期</h3>
+                <div class="lifecycle-comparison">
+                    <div class="lifecycle-card">
+                        <h4>Foreground</h4>
+                        <ul>
+                            <li>主线程等待结果</li>
+                            <li>可在执行中被 background 化</li>
+                            <li>有 progress tracking</li>
+                            <li>结果直接返回</li>
+                        </ul>
+                    </div>
+                    <div class="lifecycle-card">
+                        <h4>Background</h4>
+                        <ul>
+                            <li>独立 abort controller</li>
+                            <li>后台异步运行</li>
+                            <li>完成后 notification 通知</li>
+                            <li>可选自动 summarization</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>runAgent() 产品化证据</h3>
+                <p><code>runAgent.ts</code> 不是简单 wrapper，而是子 agent 的完整 runtime constructor，包含大量产品级细节：</p>
+                <div class="evidence-grid">
+                    <div class="evidence-item"><code>recordSidechainTranscript()</code> — 记录对话副本</div>
+                    <div class="evidence-item"><code>writeAgentMetadata()</code> — 写入元数据</div>
+                    <div class="evidence-item"><code>registerPerfettoAgent()</code> — 性能追踪</div>
+                    <div class="evidence-item"><code>cleanupAgentTracking()</code> — 清理跟踪</div>
+                    <div class="evidence-item"><code>killShellTasksForAgent()</code> — 终止子进程</div>
+                    <div class="evidence-item">清理 session hooks / MCP / file state / todos</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 内置 Agent 深挖 -->
+        <section id="builtin-agents" class="section">
+            <div class="section-header">
+                <span class="section-number">25</span>
+                <h1>内置 Agent 深挖</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>职责分工，而不是万能 Worker</h3>
+                <p>Anthropic 的方向不是让一个 agent 什么都做，而是 <strong>specialization</strong>：探索给 Explore、规划给 Plan、验证给 Verification、通用任务给 General Purpose。</p>
+            </div>
+            <div class="card">
+                <h3>六大内置 Agent</h3>
+                <div class="agent-roster">
+                    <div class="agent-card agent-general">
+                        <div class="agent-icon">🤖</div>
+                        <h4>General Purpose</h4>
+                        <p>通用 Agent，处理搜索代码、执行多步任务等复杂工作</p>
+                        <span class="agent-tag">工具: 全部</span>
+                    </div>
+                    <div class="agent-card agent-explore">
+                        <div class="agent-icon">🔍</div>
+                        <h4>Explore</h4>
+                        <p>纯读模式的代码探索专家，快速搜索和理解代码库</p>
+                        <span class="agent-tag">工具: 只读</span>
+                    </div>
+                    <div class="agent-card agent-plan">
+                        <div class="agent-icon">📋</div>
+                        <h4>Plan</h4>
+                        <p>纯规划角色，输出 step-by-step 实现计划</p>
+                        <span class="agent-tag">工具: 只读</span>
+                    </div>
+                    <div class="agent-card agent-verify">
+                        <div class="agent-icon">🛡️</div>
+                        <h4>Verification</h4>
+                        <p>对抗性验证器，工作是 "try to break it"</p>
+                        <span class="agent-tag">工具: 全部</span>
+                    </div>
+                    <div class="agent-card agent-guide">
+                        <div class="agent-icon">📖</div>
+                        <h4>Claude Code Guide</h4>
+                        <p>回答关于 Claude Code 功能、API、SDK 的问题</p>
+                        <span class="agent-tag">工具: 只读+Web</span>
+                    </div>
+                    <div class="agent-card agent-status">
+                        <div class="agent-icon">⚙️</div>
+                        <h4>Statusline Setup</h4>
+                        <p>配置用户的状态栏设置</p>
+                        <span class="agent-tag">工具: Read+Edit</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Explore Agent：绝对只读</h3>
+                <p><code>exploreAgent.ts</code> 的 prompt 非常严格，被故意裁成 <strong>read-only specialist</strong>：</p>
+                <div class="constraint-grid">
+                    <div class="constraint-group forbidden">
+                        <h4>禁止操作</h4>
+                        <ul>
+                            <li>不能创建/修改/删除/移动文件</li>
+                            <li>不能写临时文件</li>
+                            <li>不能用重定向/heredoc 写文件</li>
+                            <li>不能运行改变系统状态的命令</li>
+                        </ul>
+                    </div>
+                    <div class="constraint-group allowed">
+                        <h4>允许操作</h4>
+                        <ul>
+                            <li>Glob / Grep / FileRead 快速探索</li>
+                            <li>Bash 只允许: ls, git status/log/diff, find, grep, cat, head, tail</li>
+                            <li>尽量并行用工具</li>
+                            <li>要快，尽快给结果</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Plan Agent：架构师而非执行者</h3>
+                <p><code>planAgent.ts</code> 被定义成 <strong>architect / planner</strong>，降低角色混杂：</p>
+                <ul>
+                    <li>只读，不准改文件</li>
+                    <li>需要先理解需求</li>
+                    <li>需要探索代码库的模式和架构</li>
+                    <li>输出 step-by-step implementation plan</li>
+                    <li>最后必须列出 <strong>Critical Files for Implementation</strong></li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Verification Agent：对抗性验证器</h3>
+                <p><code>verificationAgent.ts</code> 是本轮深挖中非常重要的发现。它的 prompt 开头就点出两类失败模式：</p>
+                <div class="failure-modes">
+                    <div class="failure-mode">
+                        <h4>失败模式 1: verification avoidance</h4>
+                        <p>只看代码、不跑检查、写 PASS 就走</p>
+                    </div>
+                    <div class="failure-mode">
+                        <h4>失败模式 2: 被前 80% 迷惑</h4>
+                        <p>UI 看起来还行、测试也过了，就忽略最后 20% 的问题</p>
+                    </div>
+                </div>
+                <p style="margin-top:16px"><strong>Prompt 强制要求的验证清单：</strong></p>
+                <div class="verify-checklist">
+                    <div class="verify-item"><span class="verify-icon">🔨</span> build 构建通过</div>
+                    <div class="verify-item"><span class="verify-icon">🧪</span> test suite 测试套件</div>
+                    <div class="verify-item"><span class="verify-icon">📏</span> linter / type-check</div>
+                    <div class="verify-item"><span class="verify-icon">🌐</span> frontend: 浏览器自动化验证</div>
+                    <div class="verify-item"><span class="verify-icon">🖥️</span> backend: curl/fetch 实测响应</div>
+                    <div class="verify-item"><span class="verify-icon">📟</span> CLI: stdout/stderr/exit code</div>
+                    <div class="verify-item"><span class="verify-icon">🗄️</span> migration: up/down + 已有数据</div>
+                    <div class="verify-item"><span class="verify-icon">🔄</span> refactor: 测 public API surface</div>
+                    <div class="verify-item"><span class="verify-icon">⚔️</span> 必须做 adversarial probes</div>
+                    <div class="verify-item"><span class="verify-icon">📋</span> 每个 check 带 command + output</div>
+                </div>
+                <div class="verdict-output">
+                    最终必须输出: <code>VERDICT: PASS</code> / <code>FAIL</code> / <code>PARTIAL</code>
+                </div>
+                <div class="note">
+                    <strong>关键洞察：</strong>Verification Agent 不是"再跑一次测试"，而是一个 <strong>adversarial validator</strong>。它把很多 LLM 常见的"差不多就算了"直接用 prompt 反制掉了。
+                </div>
+            </div>
+            <div class="card">
+                <h3>Agent Prompt 中的"反懒 delegation"设计</h3>
+                <p>AgentTool/prompt.ts 明确教育模型如何给子 agent 写 prompt：</p>
+                <pre><code class="language-plaintext">✅ 正确做法:
+- 像对新同事 briefing 一样写 prompt
+- 说明目标和原因
+- 说明你已经排除了什么
+- 提供足够背景让它能做判断
+- 给到 file path、line、具体改动要求
+
+❌ 错误做法 (懒 delegation):
+- "基于你的发现，修复 bug"
+- "根据研究结果，实现它"
+- 把理解任务的工作外包给 agent</code></pre>
+                <div class="note">
+                    这是为什么 Claude Code 的 subagent 效果更稳：<strong>主 agent 被 prompt 强制要求承担 synthesis 责任</strong>。
+                </div>
+            </div>
+        </section>
+
+        <!-- Skill/Plugin/Hook 生态 -->
+        <section id="ecosystem" class="section">
+            <div class="section-header">
+                <span class="section-number">26</span>
+                <h1>Skill / Plugin / Hook 生态</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>不是外挂，是模型可感知的扩展体系</h3>
+                <p>很多系统也有插件和工具，但模型本身不知道有哪些扩展、什么时候该用、怎么用。Claude Code 通过 skills 列表、agent 列表、MCP instructions、session-specific guidance 让模型<strong>"知道自己的扩展能力是什么"</strong>。</p>
+            </div>
+            <div class="card">
+                <h3>Skill：Workflow Package</h3>
+                <p>Skill 不是文档，而是 <strong>prompt-native workflow package</strong>：</p>
+                <div class="eco-detail">
+                    <div class="eco-what">
+                        <h4>本质</h4>
+                        <ul>
+                            <li>Markdown prompt bundle</li>
+                            <li>带 frontmatter metadata</li>
+                            <li>可声明 allowed-tools</li>
+                            <li>可按需注入当前上下文</li>
+                            <li>可把重复工作流压缩成可复用能力包</li>
+                        </ul>
+                    </div>
+                    <div class="eco-rule">
+                        <h4>运行时规则</h4>
+                        <ul>
+                            <li>task 匹配 skill 时<strong>必须</strong>调用 Skill tool</li>
+                            <li>不能只提 skill 不执行</li>
+                            <li>slash command 可以视为 skill 入口</li>
+                            <li>如果 skill 已通过 tag 注入，则不要重复调用</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Plugin：Prompt + Metadata + Runtime Constraints</h3>
+                <p>插件不是普通 CLI 插件，而是<strong>模型行为层面的扩展单元</strong>。能提供的能力包括：</p>
+                <div class="plugin-capabilities">
+                    <span class="plugin-cap">markdown commands</span>
+                    <span class="plugin-cap">SKILL.md skill 目录</span>
+                    <span class="plugin-cap">commandsMetadata</span>
+                    <span class="plugin-cap">userConfig</span>
+                    <span class="plugin-cap">shell frontmatter</span>
+                    <span class="plugin-cap">allowed-tools</span>
+                    <span class="plugin-cap">model / effort hints</span>
+                    <span class="plugin-cap">user-invocable</span>
+                    <span class="plugin-cap">disable-model-invocation</span>
+                    <span class="plugin-cap">runtime 变量替换</span>
+                </div>
+                <pre><code class="language-plaintext">支持的 runtime 变量:
+${CLAUDE_PLUGIN_ROOT}    — 插件根目录
+${CLAUDE_PLUGIN_DATA}    — 插件数据目录
+${CLAUDE_SKILL_DIR}      — 技能目录
+${CLAUDE_SESSION_ID}     — 当前会话 ID
+${user_config.X}         — 用户配置变量</code></pre>
+            </div>
+            <div class="card">
+                <h3>Hook：运行时治理层</h3>
+                <p>Hook 不仅能"记日志"，还是 <strong>runtime policy layer</strong>，支持三个阶段拦截：</p>
+                <div class="hook-phases">
+                    <div class="hook-phase">
+                        <h4>PreToolUse</h4>
+                        <p>工具执行前拦截</p>
+                    </div>
+                    <div class="hook-phase">
+                        <h4>PostToolUse</h4>
+                        <p>工具执行后处理</p>
+                    </div>
+                    <div class="hook-phase">
+                        <h4>PostToolUseFailure</h4>
+                        <p>工具失败后处理</p>
+                    </div>
+                </div>
+                <p style="margin-top:16px">Hook 可以返回的控制指令：</p>
+                <table class="dep-table">
+                    <thead><tr><th>字段</th><th>作用</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>message</code></td><td>向对话注入消息</td></tr>
+                        <tr><td><code>blockingError</code></td><td>阻断错误</td></tr>
+                        <tr><td><code>updatedInput</code></td><td>改写工具输入</td></tr>
+                        <tr><td><code>permissionBehavior</code></td><td>allow / ask / deny</td></tr>
+                        <tr><td><code>preventContinuation</code></td><td>阻止流程继续</td></tr>
+                        <tr><td><code>stopReason</code></td><td>停止原因</td></tr>
+                        <tr><td><code>additionalContexts</code></td><td>追加上下文</td></tr>
+                        <tr><td><code>updatedMCPToolOutput</code></td><td>修改 MCP 工具输出</td></tr>
+                    </tbody>
+                </table>
+                <div class="note">
+                    <strong>安全设计：</strong>Hook 的 allow 不会自动突破 settings deny/ask rules。如果 tool 要求 user interaction 而 hook 没提供 updatedInput，仍要走统一 permission flow。Hook 强，但<strong>没有绕开核心安全模型</strong>。
+                </div>
+            </div>
+            <div class="card">
+                <h3>MCP：工具桥 + 行为说明注入通道</h3>
+                <p>MCP 的价值远高于简单 tool registry，因为它能同时注入：</p>
+                <div class="mcp-dual">
+                    <div class="mcp-channel">
+                        <h4>1. 新工具</h4>
+                        <p>外部 MCP Server 提供的工具，透明包装为标准 Tool</p>
+                    </div>
+                    <div class="mcp-channel">
+                        <h4>2. 使用说明</h4>
+                        <p>通过 <code>getMcpInstructionsSection()</code> 把 MCP server 的 instructions 拼进 system prompt</p>
+                    </div>
+                </div>
+                <p style="margin-top:12px">此外，Agent 还可以自带 agent-specific MCP servers：</p>
+                <ul>
+                    <li>从配置中按名字引用现有 MCP server</li>
+                    <li>在 frontmatter 里内联定义 agent-specific MCP server</li>
+                    <li>Agent 结束时自动 cleanup</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- 工具执行管线 -->
+        <section id="tool-pipeline" class="section">
+            <div class="section-header">
+                <span class="section-number">27</span>
+                <h1>工具执行管线</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>不是直连函数调用，是 Runtime Pipeline</h3>
+                <p>Claude Code 的工具执行并不是"模型决定 → 直接跑函数"。<code>toolExecution.ts</code> 实现了一条标准的 runtime pipeline，包含校验、拦截、权限、执行、追踪、后处理等完整链路。</p>
+            </div>
+            <div class="card">
+                <h3>14 步执行管线</h3>
+                <div class="pipeline">
+                    <div class="pipe-stage pipe-validate">
+                        <h4>输入校验</h4>
+                        <div class="pipe-step"><span class="pipe-num">1</span> 查找 tool 定义</div>
+                        <div class="pipe-step"><span class="pipe-num">2</span> 解析 MCP metadata</div>
+                        <div class="pipe-step"><span class="pipe-num">3</span> Zod schema 校验输入</div>
+                        <div class="pipe-step"><span class="pipe-num">4</span> tool-specific validateInput</div>
+                    </div>
+                    <div class="pipe-arrow">▼</div>
+                    <div class="pipe-stage pipe-hook">
+                        <h4>Hook 拦截</h4>
+                        <div class="pipe-step"><span class="pipe-num">5</span> Bash speculative classifier check</div>
+                        <div class="pipe-step"><span class="pipe-num">6</span> 运行 PreToolUse hooks</div>
+                        <div class="pipe-step"><span class="pipe-num">7</span> 解析 hook permission result</div>
+                    </div>
+                    <div class="pipe-arrow">▼</div>
+                    <div class="pipe-stage pipe-perm">
+                        <h4>权限决策</h4>
+                        <div class="pipe-step"><span class="pipe-num">8</span> 走 permission 决策流程</div>
+                        <div class="pipe-step"><span class="pipe-num">9</span> 根据 updatedInput 修正输入</div>
+                    </div>
+                    <div class="pipe-arrow">▼</div>
+                    <div class="pipe-stage pipe-exec">
+                        <h4>执行与追踪</h4>
+                        <div class="pipe-step"><span class="pipe-num">10</span> 真正执行 tool.call()</div>
+                        <div class="pipe-step"><span class="pipe-num">11</span> 记录 analytics / tracing / OTel</div>
+                    </div>
+                    <div class="pipe-arrow">▼</div>
+                    <div class="pipe-stage pipe-post">
+                        <h4>后处理</h4>
+                        <div class="pipe-step"><span class="pipe-num">12</span> 运行 PostToolUse hooks</div>
+                        <div class="pipe-step"><span class="pipe-num">13</span> 处理 structured output</div>
+                        <div class="pipe-step"><span class="pipe-num">14</span> 失败走 PostToolUseFailure hooks</div>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>权限语义的关键粘合层</h3>
+                <p><code>resolveHookPermissionDecision()</code> 定义了 Hook 与权限系统的严格关系：</p>
+                <pre><code class="language-plaintext">Hook Decision     Settings Rule     最终结果
+─────────────     ─────────────     ──────────
+allow             (无 deny/ask)     → 允许
+allow             deny              → 仍然拒绝 ⚠️
+allow             ask               → 仍然要问
+ask               *                 → 作为 forceDecision 传递
+deny              *                 → 直接拒绝</code></pre>
+                <div class="note">
+                    Hook 的 allow 不是万能通行证。整个权限模型是<strong>多层叠加、最严格者胜出</strong>。
+                </div>
+            </div>
+        </section>
+
+        <!-- 护城河分析 -->
+        <section id="moat" class="section">
+            <div class="section-header">
+                <span class="section-number">28</span>
+                <h1>护城河分析</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>不是一个 prompt，而是一个 Agent Operating System</h3>
+                <p>很多人复刻 coding agent 时只拿走一个 system prompt + 文件编辑工具 + bash 工具 + CLI 壳。但 Claude Code 真实的护城河，是把 prompt、tool、permission、agent、skill、plugin、hook、MCP、cache 和产品体验<strong>统一起来的完整系统</strong>。</p>
+            </div>
+            <div class="card">
+                <h3>11 层护城河</h3>
+                <div class="moat-grid">
+                    <div class="moat-item"><div class="moat-icon">📐</div><h4>Prompt Architecture</h4><p>模块化 prompt assembly，不是静态文本</p></div>
+                    <div class="moat-item"><div class="moat-icon">🛡️</div><h4>Tool Runtime Governance</h4><p>14 步执行管线，不是直连函数调用</p></div>
+                    <div class="moat-item"><div class="moat-icon">🔐</div><h4>Permission Model</h4><p>多层权限叠加，最严格者胜出</p></div>
+                    <div class="moat-item"><div class="moat-icon">🪝</div><h4>Hook Policy Layer</h4><p>运行时治理，可拦截/修改/阻断</p></div>
+                    <div class="moat-item"><div class="moat-icon">🧩</div><h4>Agent Specialization</h4><p>Explore/Plan/Verify 专职分工</p></div>
+                    <div class="moat-item"><div class="moat-icon">📦</div><h4>Skill Workflow Packaging</h4><p>可复用的 prompt-native 工作流包</p></div>
+                    <div class="moat-item"><div class="moat-icon">🔌</div><h4>Plugin Integration</h4><p>模型行为层面的扩展单元</p></div>
+                    <div class="moat-item"><div class="moat-icon">🌐</div><h4>MCP Instruction Injection</h4><p>工具+使用说明双通道注入</p></div>
+                    <div class="moat-item"><div class="moat-icon">💾</div><h4>Prompt Cache Optimization</h4><p>静态/动态分界，fork 共享 cache</p></div>
+                    <div class="moat-item"><div class="moat-icon">⏳</div><h4>Async/BG/Remote Lifecycle</h4><p>完整的 agent 生命周期管理</p></div>
+                    <div class="moat-item"><div class="moat-icon">📊</div><h4>Transcript / Telemetry</h4><p>transcript、cleanup、resume 全纳入</p></div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>四个核心优势</h3>
+                <div class="advantage-list">
+                    <div class="advantage">
+                        <h4>1. 把"好行为"制度化</h4>
+                        <p>不把"好习惯"交给模型即兴发挥，而是写进 prompt 和 runtime 规则：不要乱加功能、不要过度抽象、不要瞎重试被拒绝的工具、不要未验证就说成功、匹配 skill 时必须执行 skill、verification 不能只看代码必须跑命令。</p>
+                    </div>
+                    <div class="advantage">
+                        <h4>2. 上下文是稀缺资源</h4>
+                        <p>大量设计围绕上下文优化：system prompt 动静边界、prompt cache boundary、fork 共享 cache、skill 按需注入、MCP instructions 按连接状态注入、function result clearing、summarize tool results。<strong>它不是把 token 当免费空气，而是当 runtime 预算来管理。</strong></p>
+                    </div>
+                    <div class="advantage">
+                        <h4>3. Agent 分工降低混乱</h4>
+                        <p>研究和探索不用污染主线程；规划和实现分离，降低混乱；验证独立出来，对抗"实现者 bias"。很多系统的问题是一个 agent 既研究、又规划、又实现、又验收，最终哪件事都不够稳定。</p>
+                    </div>
+                    <div class="advantage">
+                        <h4>4. 生态是"模型可感知"的</h4>
+                        <p>通过 skills 列表、agent 列表、MCP instructions、session-specific guidance、command integration，让模型"知道自己的扩展能力是什么"。这才是生态真正能发挥作用的关键。</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>一句话总结</h3>
+                <blockquote class="final-quote">
+                    Claude Code 的真正秘密，不是一段 system prompt，而是一个把 <strong>prompt architecture、tool runtime、permission model、agent orchestration、skill packaging、plugin system、hooks governance、MCP integration、context hygiene</strong> 和 <strong>product engineering</strong> 全部统一起来的系统。这就是为什么它不像一个"会调工具的聊天机器人"，而更像一个真正可扩展、可治理、可产品化的 <strong>Agent Operating System</strong>。
+                </blockquote>
+            </div>
+        </section>
+
         <!-- 总结 -->
         <section id="summary" class="section">
             <div class="section-header">
-                <span class="section-number">23</span>
+                <span class="section-number">29</span>
                 <h1>总结与启示</h1>
             </div>
             <div class="card">
@@ -1336,6 +1963,7 @@ const SleepTool = feature('KAIROS')
             <div class="card">
                 <p style="text-align:center;color:#888;margin:0;">
                     基于 <code>@anthropic-ai/claude-code</code> v2.1.88 源码还原分析 · 仅供研究学习<br>
+                    第三部分深挖内容参考 <strong>Xiao Tan</strong> 的《Claude Code 源码深度研究报告》<br>
                     源码版权归 <a href="https://www.anthropic.com" target="_blank">Anthropic</a> 所有
                 </p>
             </div>
