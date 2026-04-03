@@ -739,3 +739,45 @@ a:hover { text-decoration:underline; }
 ::-webkit-scrollbar-thumb { background:var(--border-color); border-radius:3px; }
 ::-webkit-scrollbar-thumb:hover { background:var(--text-muted); }
 .hljs { background:#0d1117 !important; }
+
+/* Tip & Info boxes (SkyWalking page etc.) */
+.tip {
+  margin:12px 0; padding:12px 16px;
+  background:rgba(245,158,11,.08);
+  border-left:3px solid var(--accent-orange);
+  border-radius:0 8px 8px 0; font-size:13px;
+  color:var(--text-secondary); line-height:1.6;
+}
+.tip strong { color:var(--accent-orange); }
+
+.info-box {
+  margin:12px 0; padding:12px 16px;
+  background:rgba(6,182,212,.08);
+  border-left:3px solid var(--accent-cyan);
+  border-radius:0 8px 8px 0; font-size:13px;
+  color:var(--text-secondary); line-height:1.6;
+}
+.info-box strong { color:var(--accent-cyan); }
+.info-box ul { margin:6px 0 0 18px; }
+.info-box ul li { margin-bottom:3px; }
+
+/* Generic table (reusable across pages) */
+table { width:100%; border-collapse:collapse; margin:10px 0; }
+table th, table td {
+  padding:9px 12px; text-align:left;
+  border-bottom:1px solid var(--border-color); font-size:13px;
+}
+table th {
+  font-weight:600; color:var(--text-muted); font-size:11px;
+  text-transform:uppercase; letter-spacing:.05em;
+}
+table td { color:var(--text-secondary); }
+table tr:hover td { background:rgba(139,92,246,.04); }
+
+/* Feature grid 2-col variant */
+@media (max-width:700px) {
+  .feature-grid { grid-template-columns:1fr !important; }
+}
+@media (min-width:701px) and (max-width:900px) {
+  .feature-grid { grid-template-columns:repeat(2,1fr); }
+}

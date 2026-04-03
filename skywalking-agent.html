@@ -1,0 +1,1569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkyWalking Java Agent 源码深度解析 — 从 premain 到分布式追踪的完整链路</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/properties.min.js"></script>
+</head>
+<body>
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo" style="background:linear-gradient(135deg,#06b6d4,#6366f1);">SW</div>
+            <h2>SkyWalking Agent 源码解析</h2>
+            <p class="version">Apache SkyWalking Java Agent · 深度源码分析</p>
+        </div>
+        <ul class="nav-list">
+            <li class="nav-group-title">概览</li>
+            <li><a href="#intro" class="nav-link active" data-section="intro">什么是 SkyWalking Agent</a></li>
+            <li><a href="#architecture" class="nav-link" data-section="architecture">整体架构</a></li>
+            <li><a href="#modules" class="nav-link" data-section="modules">模块结构</a></li>
+
+            <li class="nav-group-title">启动流程</li>
+            <li><a href="#premain" class="nav-link" data-section="premain">premain 入口</a></li>
+            <li><a href="#config" class="nav-link" data-section="config">配置加载</a></li>
+            <li><a href="#service-manager" class="nav-link" data-section="service-manager">ServiceManager 生命周期</a></li>
+
+            <li class="nav-group-title">插件体系</li>
+            <li><a href="#plugin-loading" class="nav-link" data-section="plugin-loading">插件发现与加载</a></li>
+            <li><a href="#plugin-define" class="nav-link" data-section="plugin-define">插件定义体系</a></li>
+            <li><a href="#plugin-example" class="nav-link" data-section="plugin-example">插件实战示例</a></li>
+
+            <li class="nav-group-title">字节码增强</li>
+            <li><a href="#bytebuddy" class="nav-link" data-section="bytebuddy">ByteBuddy 集成</a></li>
+            <li><a href="#class-enhance" class="nav-link" data-section="class-enhance">类增强流程</a></li>
+            <li><a href="#interceptor" class="nav-link" data-section="interceptor">拦截器机制</a></li>
+
+            <li class="nav-group-title">分布式追踪核心</li>
+            <li><a href="#trace-model" class="nav-link" data-section="trace-model">Trace/Segment/Span 模型</a></li>
+            <li><a href="#context-manager" class="nav-link" data-section="context-manager">ContextManager 上下文</a></li>
+            <li><a href="#context-propagation" class="nav-link" data-section="context-propagation">跨进程/线程传播</a></li>
+
+            <li class="nav-group-title">数据上报</li>
+            <li><a href="#data-carrier" class="nav-link" data-section="data-carrier">DataCarrier 异步缓冲</a></li>
+            <li><a href="#grpc-report" class="nav-link" data-section="grpc-report">gRPC 数据上报</a></li>
+
+            <li class="nav-group-title">设计精华</li>
+            <li><a href="#design-patterns" class="nav-link" data-section="design-patterns">核心设计模式</a></li>
+            <li><a href="#flow-example" class="nav-link" data-section="flow-example">完整链路示例</a></li>
+            <li><a href="#sw-summary" class="nav-link" data-section="sw-summary">总结与启示</a></li>
+
+            <li class="nav-group-title">更多专题</li>
+            <li><a href="index.html" class="nav-link" style="color:var(--accent-cyan);">&larr; Claude Code 完全教程</a></li>
+        </ul>
+    </nav>
+
+    <button class="sidebar-toggle" id="sidebarToggle">&#9776;</button>
+
+    <main class="content" id="content">
+
+        <!-- ============================== -->
+        <!-- 概览                            -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">源码深度解析</span>
+            <h1 class="part-title">SkyWalking Java Agent</h1>
+            <p class="part-desc">从 premain 入口到分布式追踪的完整链路，逐行拆解 APM 探针的设计精髓</p>
+        </div>
+
+        <!-- 什么是 SkyWalking Agent -->
+        <section id="intro" class="section">
+            <div class="section-header">
+                <span class="section-number">01</span>
+                <h1>什么是 SkyWalking Java Agent</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>无侵入的 APM 探针</h3>
+                <p><strong>Apache SkyWalking Java Agent</strong> 是一个基于 Java Agent 机制 + ByteBuddy 字节码增强的 APM（Application Performance Monitoring）探针。它在 <strong>不修改任何业务代码</strong> 的前提下，自动采集分布式链路追踪、性能指标和日志关联数据。</p>
+            </div>
+            <div class="card">
+                <h3>核心能力一览</h3>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon">&#128269;</div>
+                        <h4>分布式链路追踪</h4>
+                        <p>自动追踪跨服务调用链，支持 HTTP、RPC、MQ、数据库等 100+ 中间件</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">&#9889;</div>
+                        <h4>零侵入字节码增强</h4>
+                        <p>基于 ByteBuddy 在类加载时动态修改字节码，业务代码无需任何改动</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">&#128268;</div>
+                        <h4>插件化架构</h4>
+                        <p>所有中间件支持通过插件实现，SPI 机制自动发现，热插拔</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">&#128640;</div>
+                        <h4>高性能低开销</h4>
+                        <p>ThreadLocal 上下文、DataCarrier 异步缓冲、采样策略，对业务影响极小</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>使用方式</h3>
+                <p>只需在 JVM 启动参数中加入一行：</p>
+                <pre><code class="language-bash">java -javaagent:/path/to/skywalking-agent.jar \
+     -Dskywalking.agent.service_name=my-service \
+     -Dskywalking.collector.backend_service=127.0.0.1:11800 \
+     -jar my-application.jar</code></pre>
+                <p>Agent 会在 <code>premain</code> 阶段完成所有初始化，之后对目标类进行字节码增强，自动采集链路数据并上报到 OAP 后端。</p>
+            </div>
+        </section>
+
+        <!-- 整体架构 -->
+        <section id="architecture" class="section">
+            <div class="section-header">
+                <span class="section-number">02</span>
+                <h1>整体架构</h1>
+            </div>
+            <div class="card">
+                <h3>架构全景图</h3>
+                <pre><code class="language-bash">┌─────────────────────────────────────────────────────────────────┐
+│                        JVM 启动                                 │
+│  java -javaagent:skywalking-agent.jar -jar app.jar              │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ premain()
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   SkyWalkingAgent.premain()                      │
+│  1. SnifferConfigInitializer  ──  加载配置                       │
+│  2. PluginBootstrap           ──  发现 &amp; 加载插件               │
+│  3. installClassTransformer   ──  安装 ByteBuddy 转换器          │
+│  4. ServiceManager.boot()     ──  启动核心服务                   │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+┌──────────────┐  ┌─────────────────┐  ┌──────────────────┐
+│  ByteBuddy   │  │  ServiceManager │  │   Plugin System  │
+│  Transformer │  │                 │  │                  │
+│              │  │  - GRPCChannel  │  │  skywalking-     │
+│  类匹配       │  │  - TraceReport  │  │  plugin.def      │
+│  字节码增强    │  │  - Sampling     │  │                  │
+│  拦截器注入    │  │  - JVM Metrics  │  │  100+ 插件        │
+└──────┬───────┘  └────────┬────────┘  └──────────────────┘
+       │                   │
+       ▼                   ▼
+┌──────────────────────────────────────────┐
+│           Tracing Context                │
+│  ContextManager (ThreadLocal)            │
+│  TracingContext → TraceSegment → Span    │
+│  ContextCarrier (跨进程) / Snapshot (跨线程)│
+└──────────────────────┬───────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────┐
+│       DataCarrier (异步缓冲)              │
+│  多 Channel + 环形 Buffer + 消费者线程     │
+└──────────────────────┬───────────────────┘
+                       │ gRPC Stream
+                       ▼
+┌──────────────────────────────────────────┐
+│          OAP Server (后端)                │
+│  接收 SegmentObject，分析 &amp; 存储          │
+└──────────────────────────────────────────┘</code></pre>
+            </div>
+        </section>
+
+        <!-- 模块结构 -->
+        <section id="modules" class="section">
+            <div class="section-header">
+                <span class="section-number">03</span>
+                <h1>模块结构</h1>
+            </div>
+            <div class="card">
+                <h3>核心模块拆解</h3>
+                <table>
+                    <thead>
+                        <tr><th>模块</th><th>路径</th><th>职责</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>apm-agent</strong></td><td><code>apm-sniffer/apm-agent</code></td><td>Agent 入口，包含 <code>SkyWalkingAgent.premain()</code></td></tr>
+                        <tr><td><strong>apm-agent-core</strong></td><td><code>apm-sniffer/apm-agent-core</code></td><td>核心引擎：插件加载、字节码增强、上下文管理、数据上报</td></tr>
+                        <tr><td><strong>apm-sdk-plugin</strong></td><td><code>apm-sniffer/apm-sdk-plugin</code></td><td>标准插件集：Spring、Dubbo、MySQL、Redis 等 100+</td></tr>
+                        <tr><td><strong>bootstrap-plugins</strong></td><td><code>apm-sniffer/bootstrap-plugins</code></td><td>JDK 级插件：Thread、HttpURLConnection 等</td></tr>
+                        <tr><td><strong>optional-plugins</strong></td><td><code>apm-sniffer/optional-plugins</code></td><td>可选插件：需手动启用</td></tr>
+                        <tr><td><strong>apm-commons</strong></td><td><code>apm-commons</code></td><td>公共组件：DataCarrier 异步缓冲、工具类</td></tr>
+                        <tr><td><strong>apm-protocol</strong></td><td><code>apm-protocol/apm-network</code></td><td>gRPC 协议定义，与 OAP 通信的 Protobuf</td></tr>
+                        <tr><td><strong>apm-toolkit</strong></td><td><code>apm-application-toolkit</code></td><td>应用层 API：手动追踪、日志关联</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h3>apm-agent-core 内部结构（核心中的核心）</h3>
+                <pre><code class="language-bash">apm-agent-core/src/main/java/org/apache/skywalking/apm/agent/core/
+├── boot/              # ServiceManager、BootService 生命周期
+├── conf/              # Config 配置类、动态配置
+├── context/           # ContextManager、TracingContext、Span 模型
+│   ├── ids/           # TraceId、SegmentId 生成器
+│   └── trace/         # TraceSegment、EntrySpan、ExitSpan、LocalSpan
+├── plugin/            # 插件体系
+│   ├── interceptor/   # 拦截器接口 &amp; 增强实现
+│   │   └── enhance/   # ClassEnhancePluginDefine、InstMethodsInter
+│   ├── match/         # 类匹配策略
+│   ├── loader/        # AgentClassLoader
+│   └── bootstrap/     # Bootstrap 类增强
+├── remote/            # gRPC 通道管理 &amp; 数据上报
+├── sampling/          # 采样策略
+├── profile/           # 性能剖析
+├── jvm/               # JVM 指标采集
+└── logging/           # Agent 内部日志</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 启动流程                        -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">第一部分</span>
+            <h1 class="part-title">启动流程</h1>
+            <p class="part-desc">从 JVM premain 到所有服务就绪的完整初始化链路</p>
+        </div>
+
+        <!-- premain 入口 -->
+        <section id="premain" class="section">
+            <div class="section-header">
+                <span class="section-number">04</span>
+                <h1>premain 入口</h1>
+            </div>
+            <div class="card">
+                <h3>Java Agent 机制</h3>
+                <p>Java Agent 是 JDK 提供的一种在 <code>main()</code> 方法执行之前介入 JVM 的机制。通过在 JAR 的 <code>MANIFEST.MF</code> 中声明 <code>Premain-Class</code>，JVM 会在加载应用类之前调用指定类的 <code>premain()</code> 方法，这就是 SkyWalking 实现"零侵入"的基础。</p>
+                <pre><code class="language-properties"># META-INF/MANIFEST.MF
+Premain-Class: org.apache.skywalking.apm.agent.SkyWalkingAgent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true</code></pre>
+            </div>
+            <div class="card">
+                <h3>SkyWalkingAgent.premain() 完整流程</h3>
+                <p>这是整个 Agent 的总入口，源码位于 <code>SkyWalkingAgent.java:75</code>：</p>
+                <pre><code class="language-java">public static void premain(String agentArgs, Instrumentation instrumentation)
+        throws PluginException {
+    final PluginFinder pluginFinder;
+
+    // 第一步：加载配置
+    try {
+        SnifferConfigInitializer.initializeCoreConfig(agentArgs);
+    } catch (Exception e) {
+        LogManager.getLogger(SkyWalkingAgent.class)
+                .error(e, "SkyWalking agent initialized failure. Shutting down.");
+        return;
+    }
+
+    // 第二步：检查 Agent 是否启用
+    if (!Config.Agent.ENABLE) {
+        LOGGER.warn("SkyWalking agent is disabled.");
+        return;
+    }
+
+    // 第三步：加载所有插件
+    try {
+        pluginFinder = new PluginFinder(new PluginBootstrap().loadPlugins());
+    } catch (AgentPackageNotFoundException ape) {
+        LOGGER.error(ape, "Locate agent.jar failure. Shutting down.");
+        return;
+    }
+
+    // 第四步：安装 ByteBuddy 类转换器
+    try {
+        installClassTransformer(instrumentation, pluginFinder);
+    } catch (Exception e) {
+        LOGGER.error(e, "Skywalking agent installed class transformer failure.");
+    }
+
+    // 第五步：启动核心服务
+    try {
+        ServiceManager.INSTANCE.boot();
+    } catch (Exception e) {
+        LOGGER.error(e, "Skywalking agent boot failure.");
+    }
+
+    // 第六步：注册 JVM 关闭钩子
+    Runtime.getRuntime().addShutdownHook(
+        new Thread(ServiceManager.INSTANCE::shutdown,
+                   "skywalking service shutdown thread"));
+}</code></pre>
+                <div class="tip">
+                    <strong>设计亮点：</strong>每个步骤都用 try-catch 隔离，单个步骤失败不会导致整个应用启动失败。Agent 的健壮性设计原则——永远不能因为探针问题影响业务。
+                </div>
+            </div>
+        </section>
+
+        <!-- 配置加载 -->
+        <section id="config" class="section">
+            <div class="section-header">
+                <span class="section-number">05</span>
+                <h1>配置加载</h1>
+            </div>
+            <div class="card">
+                <h3>四层配置覆盖机制</h3>
+                <p><code>SnifferConfigInitializer.initializeCoreConfig()</code> 实现了一个优雅的多层配置体系，优先级从低到高：</p>
+                <table>
+                    <thead>
+                        <tr><th>优先级</th><th>来源</th><th>示例</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>1 (最低)</td><td><code>Config</code> 类字段默认值</td><td><code>Config.Agent.SERVICE_NAME = ""</code></td></tr>
+                        <tr><td>2</td><td><code>agent.config</code> 配置文件</td><td><code>agent.service_name=my-svc</code></td></tr>
+                        <tr><td>3</td><td>JVM 系统属性</td><td><code>-Dskywalking.agent.service_name=my-svc</code></td></tr>
+                        <tr><td>4 (最高)</td><td>Agent 参数</td><td><code>-javaagent:agent.jar=agent.service_name=my-svc</code></td></tr>
+                    </tbody>
+                </table>
+                <p>配置通过反射映射到 <code>Config</code> 类的静态字段上。<code>Config.java</code> 使用嵌套静态内部类组织配置项：</p>
+                <pre><code class="language-java">public class Config {
+    public static class Agent {
+        public static String SERVICE_NAME = "";
+        public static boolean ENABLE = true;
+        public static int SAMPLE_N_PER_3_SECS = -1;  // -1 表示全采样
+        public static int SPAN_LIMIT_PER_SEGMENT = 300;
+    }
+
+    public static class Collector {
+        public static String BACKEND_SERVICE = "";
+        public static int GRPC_CHANNEL_CHECK_INTERVAL = 30;
+        public static int GRPC_UPSTREAM_TIMEOUT = 30;  // 秒
+    }
+
+    public static class Buffer {
+        public static int CHANNEL_SIZE = 5;
+        public static int BUFFER_SIZE = 300;
+    }
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- ServiceManager -->
+        <section id="service-manager" class="section">
+            <div class="section-header">
+                <span class="section-number">06</span>
+                <h1>ServiceManager 生命周期</h1>
+            </div>
+            <div class="card">
+                <h3>枚举单例 + SPI 服务发现</h3>
+                <p><code>ServiceManager</code> 是整个 Agent 的服务容器，采用枚举单例模式，通过 Java SPI（<code>ServiceLoader</code>）自动发现所有 <code>BootService</code> 实现：</p>
+                <pre><code class="language-java">public enum ServiceManager {
+    INSTANCE;  // 枚举单例，天然线程安全
+
+    private Map&lt;Class, BootService&gt; bootedServices = Collections.emptyMap();
+
+    public void boot() {
+        bootedServices = loadAllServices();  // SPI 加载
+        prepare();    // 第一阶段：准备
+        startup();    // 第二阶段：启动
+        onComplete(); // 第三阶段：完成
+    }
+
+    // 通过 Java SPI 加载所有 BootService 实现
+    void load(List&lt;BootService&gt; allServices) {
+        for (final BootService bootService : ServiceLoader.load(
+                BootService.class, AgentClassLoader.getDefault())) {
+            allServices.add(bootService);
+        }
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>三阶段生命周期</h3>
+                <p>每个 <code>BootService</code> 都经历标准的三阶段生命周期，按 <code>priority()</code> 排序执行：</p>
+                <pre><code class="language-java">public interface BootService {
+    void prepare();     // 准备阶段：注册监听器、初始化资源
+    void boot();        // 启动阶段：开始工作（建立连接、启动线程等）
+    void onComplete();  // 完成阶段：所有服务就绪后的回调
+    void shutdown();    // 关闭阶段：优雅停机（倒序执行）
+    default int priority() { return 0; }
+}</code></pre>
+                <div class="info-box">
+                    <strong>核心 BootService 列表：</strong>
+                    <ul>
+                        <li><code>GRPCChannelManager</code> — 管理到 OAP 的 gRPC 连接</li>
+                        <li><code>TraceSegmentServiceClient</code> — 链路数据上报</li>
+                        <li><code>ContextManager</code> — 上下文管理（ThreadLocal）</li>
+                        <li><code>SamplingService</code> — 采样策略</li>
+                        <li><code>JVMService</code> — JVM 指标采集</li>
+                        <li><code>ProfileTaskExecutionService</code> — 性能剖析</li>
+                        <li><code>CommandService</code> — 下发命令处理</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="card">
+                <h3>@DefaultImplementor 与 @OverrideImplementor</h3>
+                <p>SkyWalking 设计了一套优雅的服务覆盖机制，允许不同场景替换默认实现：</p>
+                <pre><code class="language-java">// 默认实现
+@DefaultImplementor
+public class TraceSegmentServiceClient implements BootService { ... }
+
+// Kafka 上报覆盖 gRPC 上报（在 optional-reporter-plugins 中）
+@OverrideImplementor(TraceSegmentServiceClient.class)
+public class KafkaTraceSegmentServiceClient implements BootService { ... }</code></pre>
+                <p>加载逻辑在 <code>ServiceManager.loadAllServices()</code> 中：如果检测到 <code>@OverrideImplementor</code> 注解，会替换对应的 <code>@DefaultImplementor</code> 服务，实现可插拔的服务替换。</p>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 插件体系                        -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">第二部分</span>
+            <h1 class="part-title">插件体系</h1>
+            <p class="part-desc">SPI 自动发现、插件定义与增强规则</p>
+        </div>
+
+        <!-- 插件发现与加载 -->
+        <section id="plugin-loading" class="section">
+            <div class="section-header">
+                <span class="section-number">07</span>
+                <h1>插件发现与加载</h1>
+            </div>
+            <div class="card">
+                <h3>PluginBootstrap.loadPlugins()</h3>
+                <p>插件加载的完整流程，源码位于 <code>PluginBootstrap.java:41</code>：</p>
+                <pre><code class="language-java">public List&lt;AbstractClassEnhancePluginDefine&gt; loadPlugins()
+        throws AgentPackageNotFoundException {
+    // 1. 初始化 Agent 专用的 ClassLoader
+    AgentClassLoader.initDefaultLoader();
+
+    // 2. 扫描所有 JAR 中的 skywalking-plugin.def 文件
+    PluginResourcesResolver resolver = new PluginResourcesResolver();
+    List&lt;URL&gt; resources = resolver.getResources();
+
+    // 3. 解析每个 def 文件
+    for (URL pluginUrl : resources) {
+        PluginCfg.INSTANCE.load(pluginUrl.openStream());
+    }
+
+    // 4. 通过反射实例化每个插件类
+    List&lt;PluginDefine&gt; pluginClassList = PluginCfg.INSTANCE.getPluginClassList();
+    List&lt;AbstractClassEnhancePluginDefine&gt; plugins = new ArrayList&lt;&gt;();
+    for (PluginDefine pluginDefine : pluginClassList) {
+        AbstractClassEnhancePluginDefine plugin =
+            (AbstractClassEnhancePluginDefine) Class.forName(
+                pluginDefine.getDefineClass(),
+                true,
+                AgentClassLoader.getDefault()
+            ).newInstance();
+        plugins.add(plugin);
+    }
+
+    // 5. 加载动态插件
+    plugins.addAll(DynamicPluginLoader.INSTANCE.load(AgentClassLoader.getDefault()));
+
+    return plugins;
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>skywalking-plugin.def 文件格式</h3>
+                <p>每个插件 JAR 中都包含一个 <code>skywalking-plugin.def</code> 文件，格式极其简洁：</p>
+                <pre><code class="language-properties"># 格式：插件名称=插件定义类全限定名
+feign-default-http-9.x=org.apache.skywalking.apm.plugin.feign.http.v9.define.DefaultHttpClientInstrumentation
+spring-mvc-annotation-5.x=org.apache.skywalking.apm.plugin.spring.mvc.v5.define.Spring5Instrumentation
+mysql-8.x=org.apache.skywalking.apm.plugin.jdbc.mysql.v8.define.ConnectionInstrumentation</code></pre>
+                <div class="tip">
+                    <strong>设计亮点：</strong>插件声明采用简单的 key=value 文本文件而非 XML/JSON，保证了极快的解析速度。在 Agent premain 阶段，每一毫秒都很宝贵。
+                </div>
+            </div>
+            <div class="card">
+                <h3>PluginFinder — 插件索引</h3>
+                <p>加载完所有插件后，<code>PluginFinder</code> 将它们按匹配方式分类索引：</p>
+                <pre><code class="language-java">public class PluginFinder {
+    // 精确类名匹配：className → List&lt;Plugin&gt;
+    private final Map&lt;String, LinkedList&lt;AbstractClassEnhancePluginDefine&gt;&gt;
+        nameMatchDefine = new HashMap&lt;&gt;();
+
+    // 间接匹配（接口、继承、注解等）
+    private final List&lt;AbstractClassEnhancePluginDefine&gt;
+        signatureMatchDefine = new ArrayList&lt;&gt;();
+
+    // Bootstrap 类增强（JDK 核心类）
+    private final List&lt;AbstractClassEnhancePluginDefine&gt;
+        bootstrapClassMatchDefine = new ArrayList&lt;&gt;();
+
+    // 当某个类被加载时，查找所有适用的插件
+    public List&lt;AbstractClassEnhancePluginDefine&gt; find(TypeDescription typeDescription) {
+        // 先查精确匹配，再查签名匹配
+        ...
+    }
+
+    // 构建 ByteBuddy 的 ElementMatcher，用于全局类匹配
+    public ElementMatcher&lt;? super TypeDescription&gt; buildMatch() {
+        // 合并所有插件的匹配规则
+        ...
+    }
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- 插件定义体系 -->
+        <section id="plugin-define" class="section">
+            <div class="section-header">
+                <span class="section-number">08</span>
+                <h1>插件定义体系</h1>
+            </div>
+            <div class="card">
+                <h3>插件类继承体系</h3>
+                <pre><code class="language-bash">AbstractClassEnhancePluginDefine          # 抽象基类
+├── ClassEnhancePluginDefine              # 实现字节码增强逻辑
+│   ├── ClassInstanceMethodsEnhancePluginDefine  # 只增强实例方法
+│   └── ClassStaticMethodsEnhancePluginDefine    # 只增强静态方法
+└── v2/ClassEnhancePluginDefineV2         # V2 版本（优化性能）</code></pre>
+            </div>
+            <div class="card">
+                <h3>AbstractClassEnhancePluginDefine — 插件基类</h3>
+                <p>每个插件都必须实现以下核心方法：</p>
+                <pre><code class="language-java">public abstract class AbstractClassEnhancePluginDefine {
+    // 动态注入的字段名（用于存储 Agent 上下文）
+    public static final String CONTEXT_ATTR_NAME = "_$EnhancedClassField_ws";
+
+    // 定义要增强的目标类
+    protected abstract ClassMatch enhanceClass();
+
+    // 定义构造器拦截点
+    public abstract ConstructorInterceptPoint[] getConstructorsInterceptPoints();
+
+    // 定义实例方法拦截点
+    public abstract InstanceMethodsInterceptPoint[] getInstanceMethodsInterceptPoints();
+
+    // 定义静态方法拦截点
+    public abstract StaticMethodsInterceptPoint[] getStaticMethodsInterceptPoints();
+
+    // 主入口：define() 方法
+    public DynamicType.Builder&lt;?&gt; define(TypeDescription typeDescription,
+            DynamicType.Builder&lt;?&gt; builder, ClassLoader classLoader,
+            EnhanceContext context) throws PluginException {
+        // 1. 版本检测（Witness 机制）
+        String[] witnessClasses = witnessClasses();
+        if (witnessClasses != null) {
+            for (String witnessClass : witnessClasses) {
+                if (!WitnessFinder.INSTANCE.exist(witnessClass, classLoader)) {
+                    return null;  // 版本不匹配，跳过增强
+                }
+            }
+        }
+        // 2. 执行增强
+        return this.enhance(typeDescription, builder, classLoader, context);
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>Witness 版本检测机制</h3>
+                <p>同一个框架的不同版本可能有相同的类名但不同的方法签名。SkyWalking 通过 <strong>Witness 类</strong>解决这个问题：</p>
+                <pre><code class="language-java">// 只在 Spring 5.x 中存在的类，作为版本标记
+@Override
+protected String[] witnessClasses() {
+    return new String[] {
+        "org.springframework.web.servlet.resource.HttpResource"
+    };
+}</code></pre>
+                <p>如果指定的 Witness 类在当前 ClassLoader 中不存在，说明版本不匹配，该插件会被安全地跳过。这确保了针对同一框架不同版本的多个插件可以共存而不冲突。</p>
+            </div>
+        </section>
+
+        <!-- 插件实战示例 -->
+        <section id="plugin-example" class="section">
+            <div class="section-header">
+                <span class="section-number">09</span>
+                <h1>插件实战示例</h1>
+            </div>
+            <div class="card">
+                <h3>Feign HTTP 客户端插件</h3>
+                <p>以 <code>DefaultHttpClientInstrumentation</code> 为例，看看一个完整插件的定义：</p>
+                <pre><code class="language-java">public class DefaultHttpClientInstrumentation
+        extends ClassInstanceMethodsEnhancePluginDefine {
+
+    private static final String ENHANCE_CLASS = "feign.Client$Default";
+    private static final String INTERCEPT_CLASS =
+        "org.apache.skywalking.apm.plugin.feign.http.v9.DefaultHttpClientInterceptor";
+
+    // 1. 指定要增强的目标类
+    @Override
+    protected ClassMatch enhanceClass() {
+        return byName(ENHANCE_CLASS);  // 精确匹配 feign.Client$Default
+    }
+
+    // 2. 不拦截构造器
+    @Override
+    public ConstructorInterceptPoint[] getConstructorsInterceptPoints() {
+        return new ConstructorInterceptPoint[0];
+    }
+
+    // 3. 拦截 execute() 方法
+    @Override
+    public InstanceMethodsInterceptPoint[] getInstanceMethodsInterceptPoints() {
+        return new InstanceMethodsInterceptPoint[] {
+            new InstanceMethodsInterceptPoint() {
+                @Override
+                public ElementMatcher&lt;MethodDescription&gt; getMethodsMatcher() {
+                    return named("execute");  // 匹配方法名
+                }
+
+                @Override
+                public String getMethodsInterceptor() {
+                    return INTERCEPT_CLASS;  // 拦截器类名（延迟加载）
+                }
+
+                @Override
+                public boolean isOverrideArgs() {
+                    return false;  // 不修改方法参数
+                }
+            }
+        };
+    }
+}</code></pre>
+                <div class="tip">
+                    <strong>关键设计：</strong>拦截器类名是一个字符串而非类引用。这是延迟加载策略——只有当目标类真正被加载时，才会实例化拦截器，避免不必要的类加载开销。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 字节码增强                      -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">第三部分</span>
+            <h1 class="part-title">字节码增强</h1>
+            <p class="part-desc">ByteBuddy 集成、类转换与拦截器注入的实现细节</p>
+        </div>
+
+        <!-- ByteBuddy 集成 -->
+        <section id="bytebuddy" class="section">
+            <div class="section-header">
+                <span class="section-number">10</span>
+                <h1>ByteBuddy 集成</h1>
+            </div>
+            <div class="card">
+                <h3>installClassTransformer()</h3>
+                <p>这是将 ByteBuddy 与 Java Instrumentation API 桥接的关键方法：</p>
+                <pre><code class="language-java">static void installClassTransformer(Instrumentation instrumentation,
+        PluginFinder pluginFinder) throws Exception {
+    // 1. 创建定制化的 ByteBuddy 实例
+    AgentBuilder agentBuilder = newAgentBuilder()
+        .ignore(
+            nameStartsWith("net.bytebuddy.")     // 排除 ByteBuddy 自身
+            .or(nameStartsWith("org.slf4j."))     // 排除日志框架
+            .or(nameContains("javassist"))         // 排除其他字节码工具
+            .or(nameContains(".asm."))
+            .or(nameStartsWith("sun.reflect"))     // 排除反射相关
+            .or(allSkyWalkingAgentExcludeToolkit()) // 排除 Agent 自身（保留 Toolkit）
+            .or(ElementMatchers.isSynthetic())      // 排除合成类
+        );
+
+    // 2. 注入 Bootstrap 类增强（增强 JDK 核心类）
+    agentBuilder = BootstrapInstrumentBoost.inject(
+        pluginFinder, instrumentation, agentBuilder, edgeClasses);
+
+    // 3. JDK 9+ 模块系统兼容
+    agentBuilder = JDK9ModuleExporter.openReadEdge(
+        instrumentation, agentBuilder, edgeClasses);
+
+    // 4. 注册类匹配 + Transformer + 安装
+    agentBuilder
+        .type(pluginFinder.buildMatch())           // 全局类匹配规则
+        .transform(new Transformer(pluginFinder))  // 类转换器
+        .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+        .with(new Listener())                      // 转换事件监听
+        .installOn(instrumentation);               // 安装到 JVM
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>定制化 ByteBuddy 实例</h3>
+                <p>SkyWalking 对 ByteBuddy 进行了多项定制，避免与业务代码冲突：</p>
+                <pre><code class="language-java">private static AgentBuilder newAgentBuilder() {
+    final ByteBuddy byteBuddy = new ByteBuddy()
+        .with(TypeValidation.of(Config.Agent.IS_OPEN_DEBUGGING_CLASS))
+        // 定制命名策略：生成的辅助类带 "_sw" 后缀
+        .with(new SWAuxiliaryTypeNamingStrategy(NAME_TRAIT))
+        // 定制实现上下文工厂
+        .with(new SWImplementationContextFactory(NAME_TRAIT))
+        // 定制方法图编译器
+        .with(new SWMethodGraphCompilerDelegate(MethodGraph.Compiler.DEFAULT));
+
+    return new SWAgentBuilderDefault(byteBuddy,
+                new SWNativeMethodStrategy(NAME_TRAIT))
+            .with(new SWDescriptionStrategy(NAME_TRAIT));
+}</code></pre>
+                <div class="info-box">
+                    <strong>为什么要定制？</strong> ByteBuddy 默认生成的辅助类名可能与业务代码冲突。通过添加 <code>_sw</code> 后缀，确保所有 SkyWalking 生成的类都有唯一的命名空间。
+                </div>
+            </div>
+        </section>
+
+        <!-- 类增强流程 -->
+        <section id="class-enhance" class="section">
+            <div class="section-header">
+                <span class="section-number">11</span>
+                <h1>类增强流程</h1>
+            </div>
+            <div class="card">
+                <h3>Transformer — 类转换核心</h3>
+                <p>当 JVM 加载一个匹配插件规则的类时，<code>Transformer.transform()</code> 被调用：</p>
+                <pre><code class="language-java">private static class Transformer implements AgentBuilder.Transformer {
+    private PluginFinder pluginFinder;
+
+    @Override
+    public DynamicType.Builder&lt;?&gt; transform(
+            final DynamicType.Builder&lt;?&gt; builder,
+            final TypeDescription typeDescription,
+            final ClassLoader classLoader,
+            final JavaModule javaModule,
+            final ProtectionDomain protectionDomain) {
+
+        // 1. 查找所有匹配的插件
+        List&lt;AbstractClassEnhancePluginDefine&gt; pluginDefines =
+            pluginFinder.find(typeDescription);
+
+        if (pluginDefines.size() &gt; 0) {
+            DynamicType.Builder&lt;?&gt; newBuilder = builder;
+            EnhanceContext context = new EnhanceContext();
+
+            // 2. 链式应用所有插件的增强逻辑
+            for (AbstractClassEnhancePluginDefine define : pluginDefines) {
+                DynamicType.Builder&lt;?&gt; possibleNewBuilder = define.define(
+                    typeDescription, newBuilder, classLoader, context);
+                if (possibleNewBuilder != null) {
+                    newBuilder = possibleNewBuilder;
+                }
+            }
+            return newBuilder;
+        }
+        return builder;
+    }
+}</code></pre>
+                <div class="tip">
+                    <strong>多插件叠加：</strong>同一个类可以被多个插件增强。每个插件的 <code>define()</code> 返回新的 Builder，作为下一个插件的输入，实现链式增强。
+                </div>
+            </div>
+            <div class="card">
+                <h3>ClassEnhancePluginDefine.enhanceInstance() — 实例增强</h3>
+                <p>这是字节码操作的核心，源码位于 <code>ClassEnhancePluginDefine.java:67</code>：</p>
+                <pre><code class="language-java">protected DynamicType.Builder&lt;?&gt; enhanceInstance(
+        TypeDescription typeDescription,
+        DynamicType.Builder&lt;?&gt; newClassBuilder,
+        ClassLoader classLoader,
+        EnhanceContext context) throws PluginException {
+
+    // 步骤 1：注入上下文字段
+    // 为目标类添加一个 Object 类型的 private volatile 字段
+    // 并实现 EnhancedInstance 接口
+    if (!typeDescription.isAssignableTo(EnhancedInstance.class)) {
+        if (!context.isObjectExtended()) {
+            newClassBuilder = newClassBuilder
+                .defineField(CONTEXT_ATTR_NAME, Object.class,
+                             ACC_PRIVATE | ACC_VOLATILE)
+                .implement(EnhancedInstance.class)
+                .intercept(FieldAccessor.ofField(CONTEXT_ATTR_NAME));
+            context.extendObjectCompleted();
+        }
+    }
+
+    // 步骤 2：增强构造器
+    for (ConstructorInterceptPoint point : constructorInterceptPoints) {
+        newClassBuilder = newClassBuilder
+            .constructor(point.getConstructorMatcher())
+            .intercept(SuperMethodCall.INSTANCE.andThen(
+                MethodDelegation.withDefaultConfiguration()
+                    .to(new ConstructorInter(
+                        point.getConstructorInterceptor(), classLoader))));
+    }
+
+    // 步骤 3：增强实例方法
+    for (InstanceMethodsInterceptPoint point : instanceMethodsInterceptPoints) {
+        newClassBuilder = newClassBuilder
+            .method(not(isStatic()).and(point.getMethodsMatcher()))
+            .intercept(MethodDelegation.withDefaultConfiguration()
+                .to(new InstMethodsInter(
+                    point.getMethodsInterceptor(), classLoader)));
+    }
+
+    return newClassBuilder;
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>_$EnhancedClassField_ws 字段注入</h3>
+                <p>增强后的类等价于：</p>
+                <pre><code class="language-java">// 增强前
+public class FeignClient implements Client {
+    public Response execute(Request request, Options options) { ... }
+}
+
+// 增强后（概念等价，实际由字节码操作完成）
+public class FeignClient implements Client, EnhancedInstance {
+    // Agent 注入的上下文字段
+    private volatile Object _$EnhancedClassField_ws;
+
+    @Override
+    public Object getSkyWalkingDynamicField() {
+        return _$EnhancedClassField_ws;
+    }
+
+    @Override
+    public void setSkyWalkingDynamicField(Object value) {
+        _$EnhancedClassField_ws = value;
+    }
+
+    // execute() 方法被拦截器包装
+    public Response execute(Request request, Options options) {
+        // → beforeMethod()
+        // → 原始方法调用
+        // → afterMethod() / handleMethodException()
+    }
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- 拦截器机制 -->
+        <section id="interceptor" class="section">
+            <div class="section-header">
+                <span class="section-number">12</span>
+                <h1>拦截器机制</h1>
+            </div>
+            <div class="card">
+                <h3>InstanceMethodsAroundInterceptor 接口</h3>
+                <p>所有实例方法拦截器都实现这个接口，遵循 AOP 的 Around Advice 模式：</p>
+                <pre><code class="language-java">public interface InstanceMethodsAroundInterceptor {
+    // 方法执行前
+    void beforeMethod(EnhancedInstance objInst,
+                      Method method,
+                      Object[] allArguments,
+                      Class&lt;?&gt;[] argumentsTypes,
+                      MethodInterceptResult result) throws Throwable;
+
+    // 方法执行后
+    Object afterMethod(EnhancedInstance objInst,
+                       Method method,
+                       Object[] allArguments,
+                       Class&lt;?&gt;[] argumentsTypes,
+                       Object ret) throws Throwable;
+
+    // 方法异常时
+    void handleMethodException(EnhancedInstance objInst,
+                               Method method,
+                               Object[] allArguments,
+                               Class&lt;?&gt;[] argumentsTypes,
+                               Throwable t);
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>InstMethodsInter — 方法委托桥梁</h3>
+                <p><code>InstMethodsInter</code> 是 ByteBuddy 的 <code>MethodDelegation</code> 目标，它在运行时加载实际的拦截器并调用：</p>
+                <pre><code class="language-java">public class InstMethodsInter {
+    private InstanceMethodsAroundInterceptor interceptor;
+
+    public InstMethodsInter(String interceptorClassName, ClassLoader classLoader) {
+        // 延迟加载拦截器实例（带缓存）
+        this.interceptor = InterceptorInstanceLoader.load(
+            interceptorClassName, classLoader);
+    }
+
+    @RuntimeType
+    public Object intercept(@This Object obj,
+                            @AllArguments Object[] allArguments,
+                            @SuperCall Callable&lt;?&gt; zupiCall,
+                            @Origin Method method) throws Throwable {
+        EnhancedInstance targetObject = (EnhancedInstance) obj;
+        MethodInterceptResult result = new MethodInterceptResult();
+
+        // 1. beforeMethod
+        interceptor.beforeMethod(targetObject, method, allArguments,
+                                 method.getParameterTypes(), result);
+        if (result.isContinue()) {
+            // 2. 调用原始方法
+            ret = zupiCall.call();
+        }
+        // 3. afterMethod
+        ret = interceptor.afterMethod(targetObject, method, allArguments,
+                                      method.getParameterTypes(), ret);
+        return ret;
+    }
+}</code></pre>
+                <div class="info-box">
+                    <strong>InterceptorInstanceLoader：</strong>使用 <code>ConcurrentHashMap</code> 缓存拦截器实例，保证每个拦截器类只实例化一次。同时为每个目标 ClassLoader 创建独立的 <code>AgentClassLoader</code>，确保类加载隔离。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 分布式追踪核心                   -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">第四部分</span>
+            <h1 class="part-title">分布式追踪核心</h1>
+            <p class="part-desc">Trace/Segment/Span 数据模型与上下文传播机制</p>
+        </div>
+
+        <!-- Trace/Segment/Span 模型 -->
+        <section id="trace-model" class="section">
+            <div class="section-header">
+                <span class="section-number">13</span>
+                <h1>Trace / Segment / Span 模型</h1>
+            </div>
+            <div class="card">
+                <h3>三层数据模型</h3>
+                <pre><code class="language-bash">Trace（分布式追踪）
+ ├── TraceSegment A（Service-A，Thread-1）
+ │    ├── EntrySpan: POST /api/order     ← 入口
+ │    ├── LocalSpan: OrderService.create  ← 本地调用
+ │    └── ExitSpan: MySQL INSERT          ← 出口（数据库）
+ │
+ ├── TraceSegment B（Service-A，Thread-2，异步）
+ │    └── LocalSpan: sendNotification
+ │
+ └── TraceSegment C（Service-B，跨进程）
+      ├── EntrySpan: POST /api/payment   ← 入口
+      └── ExitSpan: Redis SET            ← 出口（缓存）
+
+关系：
+ - 同一个 Trace 由 traceId 关联
+ - 每个线程一个 TraceSegment（由 traceSegmentId 标识）
+ - Segment 内的 Span 通过 spanId（0, 1, 2...）编号
+ - 跨进程通过 ContextCarrier 传递 parentSegmentId + parentSpanId
+ - 跨线程通过 ContextSnapshot 传递</code></pre>
+            </div>
+            <div class="card">
+                <h3>TraceSegment — 线程级追踪片段</h3>
+                <p>源码位于 <code>TraceSegment.java:34</code>：</p>
+                <pre><code class="language-java">public class TraceSegment {
+    private String traceSegmentId;            // 全局唯一 Segment ID
+    private TraceSegmentRef ref;              // 父 Segment 引用（跨进程/线程）
+    private List&lt;AbstractTracingSpan&gt; spans;  // 已完成的 Span 列表
+    private DistributedTraceId relatedGlobalTraceId; // 所属 Trace ID
+    private boolean ignore = false;           // 是否被采样策略忽略
+    private boolean isSizeLimited = false;    // Span 数量是否超限
+    private final long createTime;
+
+    public TraceSegment() {
+        this.traceSegmentId = GlobalIdGenerator.generate();
+        this.spans = new LinkedList&lt;&gt;();
+        this.relatedGlobalTraceId = new NewDistributedTraceId();
+        this.createTime = System.currentTimeMillis();
+    }
+
+    // Span 完成后归档到 Segment
+    public void archive(AbstractTracingSpan finishedSpan) {
+        spans.add(finishedSpan);
+    }
+
+    // 转换为 gRPC Protobuf 对象
+    public SegmentObject transform() {
+        SegmentObject.Builder builder = SegmentObject.newBuilder();
+        builder.setTraceId(getRelatedGlobalTrace().getId());
+        builder.setTraceSegmentId(this.traceSegmentId);
+        for (AbstractTracingSpan span : this.spans) {
+            builder.addSpans(span.transform());
+        }
+        builder.setService(Config.Agent.SERVICE_NAME);
+        builder.setServiceInstance(Config.Agent.INSTANCE_NAME);
+        return builder.build();
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>Span 类型体系</h3>
+                <table>
+                    <thead>
+                        <tr><th>Span 类型</th><th>用途</th><th>创建时机</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>EntrySpan</strong></td><td>服务入口边界</td><td>收到 HTTP 请求、RPC 调用、MQ 消费</td></tr>
+                        <tr><td><strong>ExitSpan</strong></td><td>服务出口边界</td><td>发起 HTTP 请求、数据库调用、缓存操作</td></tr>
+                        <tr><td><strong>LocalSpan</strong></td><td>本地方法调用</td><td>内部方法追踪（无网络交互）</td></tr>
+                        <tr><td><strong>NoopSpan</strong></td><td>空操作</td><td>采样策略决定不追踪时</td></tr>
+                    </tbody>
+                </table>
+                <div class="info-box">
+                    <strong>EntrySpan 的栈复用机制：</strong>一个请求可能经过多个入口插件（如 Tomcat → Spring MVC），但只创建一个 EntrySpan。每次 <code>createEntrySpan()</code> 检查栈顶是否已有 EntrySpan，如果有则复用并更新操作名，避免冗余 Span。ExitSpan 同理。
+                </div>
+            </div>
+        </section>
+
+        <!-- ContextManager -->
+        <section id="context-manager" class="section">
+            <div class="section-header">
+                <span class="section-number">14</span>
+                <h1>ContextManager 上下文管理</h1>
+            </div>
+            <div class="card">
+                <h3>ThreadLocal 上下文</h3>
+                <p><code>ContextManager</code> 是分布式追踪的门面类，所有 Span 操作都通过它：</p>
+                <pre><code class="language-java">public class ContextManager implements BootService {
+    // 核心：每个线程一个 TracingContext
+    private static ThreadLocal&lt;AbstractTracerContext&gt; CONTEXT =
+        new ThreadLocal&lt;&gt;();
+    // 运行时上下文（存储自定义数据）
+    private static ThreadLocal&lt;RuntimeContext&gt; RUNTIME_CONTEXT =
+        new ThreadLocal&lt;&gt;();
+
+    // 懒创建上下文
+    private static AbstractTracerContext getOrCreate(
+            String operationName, boolean forceSampling) {
+        AbstractTracerContext context = CONTEXT.get();
+        if (context == null) {
+            if (StringUtil.isEmpty(operationName)) {
+                context = new IgnoredTracerContext();  // 忽略
+            } else {
+                context = EXTEND_SERVICE.createTraceContext(
+                    operationName, forceSampling);     // 创建真实上下文
+            }
+            CONTEXT.set(context);
+        }
+        return context;
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>核心 API</h3>
+                <pre><code class="language-java">// ===== 创建 Span =====
+// 创建入口 Span（带跨进程上下文提取）
+AbstractSpan span = ContextManager.createEntrySpan(operationName, carrier);
+
+// 创建出口 Span（带跨进程上下文注入）
+AbstractSpan span = ContextManager.createExitSpan(operationName, carrier, remotePeer);
+
+// 创建本地 Span
+AbstractSpan span = ContextManager.createLocalSpan(operationName);
+
+// ===== 停止 Span =====
+ContextManager.stopSpan(span);
+// 当所有 Span 停止后，TracingContext 自动关闭，触发 Segment 上报
+
+// ===== 跨进程传播 =====
+ContextManager.inject(carrier);   // 注入上下文到 Carrier
+ContextManager.extract(carrier);  // 从 Carrier 提取上下文
+
+// ===== 跨线程传播 =====
+ContextSnapshot snapshot = ContextManager.capture();    // 线程 A 捕获
+ContextManager.continued(snapshot);                      // 线程 B 恢复</code></pre>
+            </div>
+            <div class="card">
+                <h3>TracingContext — 活跃 Span 栈</h3>
+                <p>源码位于 <code>TracingContext.java:61</code>：</p>
+                <pre><code class="language-java">public class TracingContext implements AbstractTracerContext {
+    private TraceSegment segment;                           // 所属 Segment
+    private LinkedList&lt;AbstractSpan&gt; activeSpanStack;       // 活跃 Span 栈
+    private int spanIdGenerator;                            // Span ID 计数器
+    private volatile int asyncSpanCounter;                  // 异步 Span 计数
+    private volatile boolean isRunningInAsyncMode;
+    private volatile ReentrantLock asyncFinishLock;
+    private volatile boolean running;
+    private final ProfileStatusContext profileStatus;       // 性能剖析状态
+    private final CorrelationContext correlationContext;     // 用户自定义上下文
+    private final ExtensionContext extensionContext;         // 扩展上下文
+
+    // Span 栈操作（LIFO）
+    // push: createEntrySpan/createExitSpan/createLocalSpan
+    // pop:  stopSpan → 当栈空时，finish Segment → 通知 Listener
+}</code></pre>
+                <div class="tip">
+                    <strong>Span 栈生命周期：</strong><code>createXxxSpan()</code> 把 Span push 到栈中，<code>stopSpan()</code> 把 Span pop 出来并 archive 到 Segment。当栈为空时，说明当前线程的所有操作都已完成，Segment 被标记为 finished 并通知所有 <code>TracingContextListener</code>（主要是 <code>TraceSegmentServiceClient</code>）。
+                </div>
+            </div>
+        </section>
+
+        <!-- 跨进程/线程传播 -->
+        <section id="context-propagation" class="section">
+            <div class="section-header">
+                <span class="section-number">15</span>
+                <h1>跨进程/线程传播</h1>
+            </div>
+            <div class="card">
+                <h3>ContextCarrier — 跨进程传播</h3>
+                <p>当服务 A 调用服务 B 时，需要将追踪上下文通过 HTTP Header / RPC 附加信息传递：</p>
+                <pre><code class="language-java">public class ContextCarrier implements Serializable {
+    private String traceId;                // 分布式 Trace ID
+    private String traceSegmentId;         // 父 Segment ID
+    private int spanId = -1;               // 父 Span ID
+    private String parentService;          // 父服务名
+    private String parentServiceInstance;  // 父服务实例
+    private String parentEndpoint;         // 父端点名
+    private String addressUsedAtClient;    // 客户端访问地址
+    private ExtensionContext extensionContext;
+    private CorrelationContext correlationContext;
+
+    // 序列化为 SW8 协议头
+    // 格式: 1-BASE64(traceId)-BASE64(segmentId)-spanId-BASE64(service)-...
+    String serialize(HeaderVersion version) {
+        return StringUtil.join('-',
+            "1",
+            Base64.encode(this.getTraceId()),
+            Base64.encode(this.getTraceSegmentId()),
+            this.getSpanId() + "",
+            Base64.encode(this.getParentService()),
+            Base64.encode(this.getParentServiceInstance()),
+            Base64.encode(this.getParentEndpoint()),
+            Base64.encode(this.getAddressUsedAtClient())
+        );
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>跨进程传播流程</h3>
+                <pre><code class="language-bash"># 服务 A（发送方）
+ExitSpan 插件:
+  1. ContextCarrier carrier = new ContextCarrier()
+  2. ContextManager.inject(carrier)        ← 将当前上下文写入 Carrier
+  3. HTTP Header: sw8 = carrier.serialize() ← 序列化为 HTTP Header
+
+─── HTTP 请求 ──→
+
+# 服务 B（接收方）
+EntrySpan 插件:
+  1. String sw8Header = request.getHeader("sw8")
+  2. carrier.deserialize(sw8Header)         ← 反序列化
+  3. ContextManager.createEntrySpan(op, carrier)
+     → context.extract(carrier)            ← 恢复父上下文
+     → segment.ref(parentRef)              ← 建立 Segment 引用关系</code></pre>
+                <div class="info-box">
+                    <strong>SW8 协议头：</strong>SkyWalking v8 使用单个 HTTP Header <code>sw8</code> 传输所有上下文信息，通过 <code>-</code> 分隔 8 个字段，值使用 Base64 编码。相比 v6 的多 Header 方案，减少了网络开销。
+                </div>
+            </div>
+            <div class="card">
+                <h3>ContextSnapshot — 跨线程传播</h3>
+                <p>当业务代码使用异步线程（线程池、CompletableFuture 等）时，ThreadLocal 上下文无法自动传递。SkyWalking 通过快照机制解决：</p>
+                <pre><code class="language-java">// ===== 线程 A（主线程）=====
+// 捕获当前上下文快照
+ContextSnapshot snapshot = ContextManager.capture();
+
+// 将 snapshot 传递给子线程（通过参数、队列等）
+executor.submit(() -&gt; {
+    // ===== 线程 B（子线程）=====
+    // 恢复上下文快照
+    ContextManager.continued(snapshot);
+
+    // 现在线程 B 的 TracingContext 通过 TraceSegmentRef
+    // 关联到了线程 A 的 Segment，同属一个 Trace
+
+    // ... 执行业务逻辑 ...
+
+    ContextManager.stopSpan();
+});</code></pre>
+                <div class="tip">
+                    <strong>JDK Threading Plugin：</strong>SkyWalking 提供了 <code>jdk-threading-plugin</code>，自动增强 <code>Runnable</code>、<code>Callable</code>、<code>ForkJoinTask</code> 等，在提交时自动 capture snapshot，在 run/call 时自动 continued，对业务完全透明。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 数据上报                        -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">第五部分</span>
+            <h1 class="part-title">数据上报</h1>
+            <p class="part-desc">从 Segment 完成到 gRPC 发送的异步数据管线</p>
+        </div>
+
+        <!-- DataCarrier -->
+        <section id="data-carrier" class="section">
+            <div class="section-header">
+                <span class="section-number">16</span>
+                <h1>DataCarrier 异步缓冲</h1>
+            </div>
+            <div class="card">
+                <h3>高性能生产者-消费者模型</h3>
+                <p>DataCarrier 是 SkyWalking 自研的高性能异步数据传输组件，位于 <code>apm-commons/apm-datacarrier</code>：</p>
+                <pre><code class="language-bash">┌───────────────────────────────────────────────────────┐
+│                    DataCarrier                         │
+│                                                       │
+│  Producer Threads         Channels        Consumer    │
+│  ┌──────────┐         ┌──────────┐                   │
+│  │ Thread-1 │──┐      │Channel-0 │ [buf][buf][buf]   │
+│  └──────────┘  │      ├──────────┤                   │
+│  ┌──────────┐  ├──→   │Channel-1 │ [buf][buf][buf] ──→ Consumer Thread
+│  │ Thread-2 │──┤      ├──────────┤                   │    (批量消费)
+│  └──────────┘  │      │Channel-2 │ [buf][buf][buf]   │
+│  ┌──────────┐  │      ├──────────┤                   │
+│  │ Thread-N │──┘      │Channel-N │ [buf][buf][buf]   │
+│  └──────────┘         └──────────┘                   │
+│                                                       │
+│  路由策略：ThreadId % ChannelSize → 无锁分区            │
+│  缓冲策略：IF_POSSIBLE（满则丢弃，不阻塞业务线程）        │
+└───────────────────────────────────────────────────────┘</code></pre>
+            </div>
+            <div class="card">
+                <h3>核心设计</h3>
+                <pre><code class="language-java">// 初始化：5 个 Channel，每个 Channel 300 个 Buffer 槽位
+DataCarrier&lt;TraceSegment&gt; carrier = new DataCarrier&lt;&gt;(
+    CHANNEL_SIZE,   // 默认 5
+    BUFFER_SIZE,    // 默认 300
+    BufferStrategy.IF_POSSIBLE  // 满则丢弃
+);
+carrier.consume(consumer, 1);  // 1 个消费者线程
+
+// 生产者（业务线程，无锁）
+carrier.produce(traceSegment);
+// 内部：partitioner.partition(channels.length, data)
+// 默认按 Thread ID 取模路由到对应 Channel</code></pre>
+                <div class="tip">
+                    <strong>为什么不用 BlockingQueue？</strong> <code>BlockingQueue</code> 在满时会阻塞生产者线程——这对 APM 探针是不可接受的，因为不能因为数据上报而阻塞业务请求。<code>DataCarrier</code> 采用 IF_POSSIBLE 策略：缓冲区满时直接丢弃数据，保证业务零影响。
+                </div>
+            </div>
+        </section>
+
+        <!-- gRPC 数据上报 -->
+        <section id="grpc-report" class="section">
+            <div class="section-header">
+                <span class="section-number">17</span>
+                <h1>gRPC 数据上报</h1>
+            </div>
+            <div class="card">
+                <h3>TraceSegmentServiceClient — 上报核心</h3>
+                <p>源码位于 <code>TraceSegmentServiceClient.java:49</code>，它同时实现了三个接口：</p>
+                <pre><code class="language-java">@DefaultImplementor
+public class TraceSegmentServiceClient
+    implements BootService,              // 服务生命周期
+               IConsumer&lt;TraceSegment&gt;,  // DataCarrier 消费者
+               TracingContextListener,   // Segment 完成监听
+               GRPCChannelListener {     // gRPC 连接状态监听
+
+    private volatile DataCarrier&lt;TraceSegment&gt; carrier;
+    private volatile TraceSegmentReportServiceGrpc
+        .TraceSegmentReportServiceStub serviceStub;
+    private volatile GRPCChannelStatus status = DISCONNECT;
+
+    // 生命周期回调
+    @Override
+    public void prepare() {
+        // 监听 gRPC 连接状态
+        ServiceManager.INSTANCE.findService(GRPCChannelManager.class)
+            .addChannelListener(this);
+    }
+
+    @Override
+    public void boot() {
+        // 创建 DataCarrier 并启动消费者线程
+        carrier = new DataCarrier&lt;&gt;(CHANNEL_SIZE, BUFFER_SIZE,
+                                     BufferStrategy.IF_POSSIBLE);
+        carrier.consume(this, 1);
+    }
+
+    @Override
+    public void onComplete() {
+        // 注册为 Segment 完成的监听者
+        TracingContext.ListenerManager.add(this);
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>数据流转全链路</h3>
+                <pre><code class="language-java">// ① Segment 完成 → 生产到 DataCarrier
+@Override
+public void afterFinished(TraceSegment traceSegment) {
+    if (traceSegment.isIgnore()) return;  // 采样策略忽略的不上报
+    if (!carrier.produce(traceSegment)) {
+        // Buffer 满，丢弃（但不影响业务）
+        LOGGER.debug("One trace segment has been abandoned, cause by buffer is full.");
+    }
+}
+
+// ② 消费者线程批量消费 → gRPC 流式上报
+@Override
+public void consume(List&lt;TraceSegment&gt; data) {
+    if (CONNECTED.equals(status)) {
+        // 创建 gRPC 双向流
+        StreamObserver&lt;SegmentObject&gt; upstreamObserver =
+            serviceStub
+                .withDeadlineAfter(Config.Collector.GRPC_UPSTREAM_TIMEOUT,
+                                   TimeUnit.SECONDS)
+                .collect(new StreamObserver&lt;Commands&gt;() {
+                    @Override
+                    public void onNext(Commands commands) {
+                        // 处理 OAP 下发的命令
+                        ServiceManager.INSTANCE.findService(CommandService.class)
+                            .receiveCommand(commands);
+                    }
+                    @Override
+                    public void onError(Throwable t) { ... }
+                    @Override
+                    public void onCompleted() { ... }
+                });
+
+        // 逐个发送 Segment
+        for (TraceSegment segment : data) {
+            SegmentObject segmentObject = segment.transform();
+            upstreamObserver.onNext(segmentObject);
+        }
+        upstreamObserver.onCompleted();
+
+        segmentUplinkedCounter += data.size();
+    } else {
+        // gRPC 未连接，丢弃
+        segmentAbandonedCounter += data.size();
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>GRPCChannelManager — 连接管理</h3>
+                <p><code>GRPCChannelManager</code> 负责维护到 OAP 后端的 gRPC 长连接：</p>
+                <ul>
+                    <li><strong>多后端负载均衡：</strong>支持配置多个 OAP 地址，随机选择连接</li>
+                    <li><strong>定时心跳检测：</strong>默认每 30 秒检查连接状态</li>
+                    <li><strong>自动重连：</strong>连接断开后自动重建</li>
+                    <li><strong>TLS 支持：</strong>可选 TLS 加密通信</li>
+                    <li><strong>认证支持：</strong>通过 <code>AuthenticationDecorator</code> 添加认证 Header</li>
+                    <li><strong>状态通知：</strong>连接状态变化时通知所有 <code>GRPCChannelListener</code></li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 设计精华                        -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">第六部分</span>
+            <h1 class="part-title">设计精华</h1>
+            <p class="part-desc">核心设计模式与完整链路追踪示例</p>
+        </div>
+
+        <!-- 核心设计模式 -->
+        <section id="design-patterns" class="section">
+            <div class="section-header">
+                <span class="section-number">18</span>
+                <h1>核心设计模式</h1>
+            </div>
+            <div class="card">
+                <h3>1. ThreadLocal 上下文管理（零锁追踪）</h3>
+                <p>每个线程通过 <code>ThreadLocal&lt;TracingContext&gt;</code> 持有自己的追踪上下文，Span 的创建、停止、归档全部是线程本地操作，无需任何同步。这是 Agent 高性能的关键：</p>
+                <pre><code class="language-java">// 无锁操作链：
+// 1. CONTEXT.get()              → ThreadLocal 读取
+// 2. activeSpanStack.addLast()  → LinkedList 本地操作
+// 3. span.tag(key, value)       → 对象字段赋值
+// 4. activeSpanStack.removeLast() → LinkedList 本地操作
+// 5. segment.archive(span)      → LinkedList.add()
+// 全程无锁！</code></pre>
+            </div>
+            <div class="card">
+                <h3>2. SPI + 注解的服务覆盖机制</h3>
+                <p>通过 <code>@DefaultImplementor</code> 和 <code>@OverrideImplementor</code> 注解，配合 Java SPI 的 <code>ServiceLoader</code>，实现了一套灵活的服务替换体系：</p>
+                <pre><code class="language-bash">优势：
+├── 默认实现开箱即用（gRPC 上报）
+├── 只需加入对应 JAR 即可替换（Kafka 上报）
+├── 不需要修改任何配置文件
+└── 编译时检查覆盖关系（注解的 value 指定被覆盖的类）</code></pre>
+            </div>
+            <div class="card">
+                <h3>3. Witness 版本兼容机制</h3>
+                <p>通过检查特定类是否存在来判断框架版本，而非读取 pom.xml 或 MANIFEST 版本号：</p>
+                <pre><code class="language-bash">优势：
+├── 运行时检测，不依赖构建信息
+├── 同一框架不同版本的插件可以共存
+├── 版本不匹配时安全跳过，不抛异常
+└── 支持检测类和方法两个粒度</code></pre>
+            </div>
+            <div class="card">
+                <h3>4. ClassLoader 隔离策略</h3>
+                <p>SkyWalking 设计了 <code>AgentClassLoader</code> 体系来避免类加载冲突：</p>
+                <pre><code class="language-bash">Bootstrap ClassLoader
+    └── App ClassLoader
+         ├── AgentClassLoader (默认)    ← Agent 核心类
+         └── AgentClassLoader (per-app) ← 每个目标 ClassLoader 对应一个
+              └── 拦截器实例缓存
+
+为什么需要隔离？
+├── Agent 依赖的 Guava/gRPC 版本可能与业务不同
+├── 插件拦截器需要在目标 ClassLoader 的上下文中运行
+└── 防止 Agent 内部类泄露到业务代码空间</code></pre>
+            </div>
+            <div class="card">
+                <h3>5. 异步缓冲 + 优雅降级</h3>
+                <p>整个数据上报链路遵循"<strong>不能影响业务</strong>"的核心原则：</p>
+                <pre><code class="language-bash">降级策略：
+├── DataCarrier 缓冲满 → 丢弃 Segment（不阻塞业务线程）
+├── gRPC 未连接       → 丢弃 Segment（计数 + 日志）
+├── gRPC 发送超时     → 中断上报（不影响下次）
+├── Span 数量超限     → 标记 isSizeLimited，停止创建新 Span
+├── Agent 初始化失败   → 静默退出，不影响应用启动
+└── 任何插件异常      → catch 后继续，不传播到业务代码</code></pre>
+            </div>
+            <div class="card">
+                <h3>6. 延迟加载（Lazy Loading）</h3>
+                <p>贯穿整个 Agent 的懒加载策略，最小化启动开销：</p>
+                <table>
+                    <thead>
+                        <tr><th>组件</th><th>延迟时机</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>拦截器实例</td><td>目标方法首次被调用时才加载</td></tr>
+                        <tr><td>gRPC Channel</td><td>首次需要上报时才建立连接</td></tr>
+                        <tr><td>TracingContext</td><td>首次创建 Span 时才实例化</td></tr>
+                        <tr><td>AgentClassLoader</td><td>对应目标 ClassLoader 首次出现时</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 完整链路示例 -->
+        <section id="flow-example" class="section">
+            <div class="section-header">
+                <span class="section-number">19</span>
+                <h1>完整链路追踪示例</h1>
+            </div>
+            <div class="card">
+                <h3>一次 HTTP 请求的完整追踪之旅</h3>
+                <p>假设：Service-A 收到一个 HTTP 请求，调用数据库后再通过 Feign 调用 Service-B。</p>
+                <pre><code class="language-bash">Step 1: HTTP 请求到达 Service-A
+────────────────────────────────
+Tomcat/Spring MVC 插件触发:
+  → ContextManager.createEntrySpan("POST /api/order", carrier)
+  → 从 HTTP Header 中提取 sw8（如果存在父上下文）
+  → ThreadLocal 中创建 TracingContext + TraceSegment
+  → 压入 EntrySpan (spanId=0)
+
+Step 2: 业务逻辑调用数据库
+────────────────────────────────
+MySQL 插件触发:
+  → ContextManager.createExitSpan("MySQL/INSERT", "mysql:3306")
+  → 压入 ExitSpan (spanId=1)
+  → ExitSpan.tag("db.type", "MySQL")
+  → ExitSpan.tag("db.statement", "INSERT INTO orders ...")
+  → SQL 执行完毕
+  → ContextManager.stopSpan()
+  → ExitSpan pop 出栈，archive 到 Segment
+
+Step 3: 通过 Feign 调用 Service-B
+────────────────────────────────
+Feign 插件触发:
+  → ContextManager.createExitSpan("GET /api/payment", carrier, "svc-b:8080")
+  → 压入 ExitSpan (spanId=2)
+  → ContextManager.inject(carrier)  // 注入上下文
+  → HTTP Header: sw8 = "1-BASE64(traceId)-BASE64(segmentId)-2-..."
+  → Feign 发起 HTTP 请求
+  → 收到响应
+  → ContextManager.stopSpan()
+  → ExitSpan pop 出栈，archive 到 Segment
+
+Step 4: HTTP 请求返回
+────────────────────────────────
+Tomcat/Spring MVC 插件触发:
+  → ContextManager.stopSpan()  // 停止 EntrySpan
+  → EntrySpan pop 出栈，archive 到 Segment
+  → activeSpanStack 为空！
+  → TracingContext.finish()
+  → 通知 TracingContextListener
+
+Step 5: 数据上报
+────────────────────────────────
+TraceSegmentServiceClient.afterFinished(segment):
+  → carrier.produce(segment)  // 放入 DataCarrier
+
+Consumer Thread (异步):
+  → consume([segment1, segment2, ...])
+  → segment.transform()  // → SegmentObject (Protobuf)
+  → gRPC stream.onNext(segmentObject)
+  → stream.onCompleted()
+  → OAP Server 接收并存储
+
+Step 6: 同时在 Service-B
+────────────────────────────────
+Service-B 的 Spring MVC 插件:
+  → 从 sw8 Header 反序列化 ContextCarrier
+  → ContextManager.createEntrySpan("GET /api/payment", carrier)
+  → context.extract(carrier)  // 恢复父上下文
+  → segment.ref(parentRef)    // 关联到 Service-A 的 Segment
+  → ... 执行业务逻辑 ...
+  → 相同的上报流程</code></pre>
+            </div>
+            <div class="card">
+                <h3>最终在 SkyWalking UI 上看到的拓扑</h3>
+                <pre><code class="language-bash">  Trace Timeline (traceId: abc123)
+  ┌─────────────────────────────────────────────────────────┐
+  │ Service-A                                                │
+  │ ├─ EntrySpan:  POST /api/order          [0ms ─── 150ms] │
+  │ │  ├─ ExitSpan: MySQL INSERT            [10ms ── 30ms]  │
+  │ │  └─ ExitSpan: GET /api/payment        [35ms ── 140ms] │
+  │                                                          │
+  │ Service-B                                                │
+  │ └─ EntrySpan:  GET /api/payment         [40ms ── 135ms] │
+  │    └─ ExitSpan: Redis SET               [50ms ── 60ms]  │
+  └─────────────────────────────────────────────────────────┘</code></pre>
+            </div>
+        </section>
+
+        <!-- 总结 -->
+        <section id="sw-summary" class="section">
+            <div class="section-header">
+                <span class="section-number">20</span>
+                <h1>总结与启示</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>SkyWalking Java Agent 的核心设计哲学</h3>
+                <p>通读整个源码，SkyWalking Agent 的设计哲学可以概括为三个原则：</p>
+                <ol>
+                    <li><strong>绝对不影响业务</strong> — 所有可能阻塞或抛异常的操作都被 try-catch 包裹，数据丢弃优于业务卡顿</li>
+                    <li><strong>极致的性能优化</strong> — ThreadLocal 无锁上下文、DataCarrier 无锁分区、延迟加载、对象复用</li>
+                    <li><strong>高度可扩展</strong> — SPI 插件机制、服务覆盖注解、Witness 版本兼容，100+ 中间件支持</li>
+                </ol>
+            </div>
+            <div class="card">
+                <h3>关键源码文件速查表</h3>
+                <table>
+                    <thead>
+                        <tr><th>功能</th><th>核心类</th><th>路径</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Agent 入口</td><td><code>SkyWalkingAgent</code></td><td><code>apm-agent/.../SkyWalkingAgent.java</code></td></tr>
+                        <tr><td>服务管理</td><td><code>ServiceManager</code></td><td><code>apm-agent-core/.../boot/ServiceManager.java</code></td></tr>
+                        <tr><td>插件加载</td><td><code>PluginBootstrap</code></td><td><code>apm-agent-core/.../plugin/PluginBootstrap.java</code></td></tr>
+                        <tr><td>插件索引</td><td><code>PluginFinder</code></td><td><code>apm-agent-core/.../plugin/PluginFinder.java</code></td></tr>
+                        <tr><td>插件基类</td><td><code>AbstractClassEnhancePluginDefine</code></td><td><code>apm-agent-core/.../plugin/AbstractClassEnhancePluginDefine.java</code></td></tr>
+                        <tr><td>字节码增强</td><td><code>ClassEnhancePluginDefine</code></td><td><code>apm-agent-core/.../enhance/ClassEnhancePluginDefine.java</code></td></tr>
+                        <tr><td>方法拦截</td><td><code>InstMethodsInter</code></td><td><code>apm-agent-core/.../enhance/InstMethodsInter.java</code></td></tr>
+                        <tr><td>上下文管理</td><td><code>ContextManager</code></td><td><code>apm-agent-core/.../context/ContextManager.java</code></td></tr>
+                        <tr><td>追踪上下文</td><td><code>TracingContext</code></td><td><code>apm-agent-core/.../context/TracingContext.java</code></td></tr>
+                        <tr><td>线程追踪片段</td><td><code>TraceSegment</code></td><td><code>apm-agent-core/.../context/trace/TraceSegment.java</code></td></tr>
+                        <tr><td>跨进程传播</td><td><code>ContextCarrier</code></td><td><code>apm-agent-core/.../context/ContextCarrier.java</code></td></tr>
+                        <tr><td>数据上报</td><td><code>TraceSegmentServiceClient</code></td><td><code>apm-agent-core/.../remote/TraceSegmentServiceClient.java</code></td></tr>
+                        <tr><td>连接管理</td><td><code>GRPCChannelManager</code></td><td><code>apm-agent-core/.../remote/GRPCChannelManager.java</code></td></tr>
+                        <tr><td>异步缓冲</td><td><code>DataCarrier</code></td><td><code>apm-commons/.../datacarrier/DataCarrier.java</code></td></tr>
+                        <tr><td>配置定义</td><td><code>Config</code></td><td><code>apm-agent-core/.../conf/Config.java</code></td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h3>可借鉴的架构思想</h3>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon">&#127919;</div>
+                        <h4>SPI 插件化</h4>
+                        <p>通过 ServiceLoader + def 文件实现零耦合插件发现，适用于任何需要扩展点的系统</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">&#128274;</div>
+                        <h4>ThreadLocal 上下文</h4>
+                        <p>线程本地存储实现无锁操作，适用于高并发场景下的请求级数据传递</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">&#128230;</div>
+                        <h4>异步缓冲</h4>
+                        <p>生产者-消费者 + 可丢弃策略，适用于不能阻塞主线程的旁路数据采集</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">&#129520;</div>
+                        <h4>字节码增强</h4>
+                        <p>ByteBuddy 运行时修改类，适用于不修改源码就需要增加横切关注点的场景</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <p style="text-align:center;color:#888;margin:0;">
+                    基于 Apache SkyWalking Java Agent 源码分析 · 仅供研究学习<br>
+                    源码版权归 <a href="https://skywalking.apache.org" target="_blank">Apache SkyWalking</a> 所有
+                </p>
+            </div>
+        </section>
+    </main>
+
+    <button class="scroll-top" id="scrollTop" title="回到顶部">&#8593;</button>
+    <script src="app.js"></script>
+</body>
+</html>
