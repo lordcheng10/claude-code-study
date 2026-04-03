@@ -48,7 +48,7 @@
             gap: 20px;
             max-width: 960px;
             width: 100%;
-            padding-bottom: 80px;
+            padding-bottom: 24px;
         }
         .blog-card {
             background: var(--bg-card);
@@ -93,6 +93,7 @@
         .blog-tag.green { background: rgba(34,197,94,.1); color: var(--accent-green); }
         .blog-tag.orange { background: rgba(245,158,11,.1); color: var(--accent-orange); }
         .blog-tag.blue { background: rgba(99,102,241,.1); color: var(--accent-blue); }
+        .blog-tag.red { background: rgba(239,68,68,.1); color: #ef4444; }
 
         .blog-card-arrow {
             font-size: 13px; color: var(--accent-purple); font-weight: 600;
@@ -103,9 +104,37 @@
         /* Section label */
         .section-label {
             max-width: 960px; width: 100%;
-            font-size: 12px; font-weight: 700; color: var(--accent-purple);
+            font-size: 12px; font-weight: 700;
             text-transform: uppercase; letter-spacing: .1em;
             margin-bottom: 16px; padding-left: 4px;
+        }
+        .section-label.first { margin-top: 0; }
+        .section-label:not(.first) { margin-top: 36px; }
+
+        /* Project group colors */
+        .section-label.apisix { color: #ef4444; }
+        .section-label.observability { color: var(--accent-cyan); }
+        .section-label.ai { color: var(--accent-purple); }
+
+        /* Project group indicator bar */
+        .project-bar {
+            max-width: 960px; width: 100%;
+            display: flex; align-items: center; gap: 12px;
+            margin-bottom: 16px; padding-left: 4px;
+        }
+        .project-bar:not(:first-of-type) { margin-top: 40px; }
+        .project-icon {
+            width: 36px; height: 36px; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px; font-weight: 700; color: #fff;
+            flex-shrink: 0;
+        }
+        .project-bar h2 {
+            font-size: 18px; font-weight: 700; color: var(--text-primary);
+            margin: 0;
+        }
+        .project-bar .project-desc {
+            font-size: 12px; color: var(--text-muted); margin-left: auto;
         }
 
         /* Footer */
@@ -121,6 +150,7 @@
             .home-header { padding: 48px 0 32px; }
             .home-header h1 { font-size: 28px; }
             .blog-grid { grid-template-columns: 1fr; }
+            .project-bar .project-desc { display: none; }
         }
     </style>
 </head>
@@ -133,26 +163,54 @@
             <p class="subtitle">每一次阅读源码，都是与优秀工程师的对话</p>
         </header>
 
-        <div class="section-label">源码解析系列</div>
+        <!-- ========== Apache APISIX ========== -->
+        <div class="project-bar">
+            <div class="project-icon" style="background:linear-gradient(135deg,#ef4444,#f97316);">AP</div>
+            <h2>Apache APISIX</h2>
+            <span class="project-desc">云原生高性能 API 网关 &middot; Lua / OpenResty</span>
+        </div>
         <div class="blog-grid">
 
-            <!-- Claude Code -->
-            <a class="blog-card" href="claude-code.html">
-                <div class="blog-card-icon" style="background:linear-gradient(135deg,#8b5cf6,#6366f1);">&#8984;</div>
-                <h3>Claude Code 完全教程</h3>
+            <a class="blog-card" href="apisix-architecture.html">
+                <div class="blog-card-icon" style="background:linear-gradient(135deg,#ef4444,#f97316);">AP</div>
+                <h3>APISIX 源码深度解析</h3>
                 <p class="blog-desc">
-                    Anthropic 官方 CLI 工具的使用指南与源码深度解析。涵盖安装配置、斜杠命令、内置工具、权限模式、MCP 服务器，以及 Agent 核心循环、工具系统、API 调用层、系统提示词架构等源码分析。
+                    Apache APISIX 的完整架构源码剖析。从启动初始化到请求生命周期，涵盖 Radixtree 路由引擎、etcd 配置同步、四大负载均衡算法、健康检查、服务发现、SSL/SNI 路由、LRU Cache 缓存系统、TablePool 对象池、Admin API、Stream L4 代理与 WASM 插件支持。
                 </p>
                 <div class="blog-card-tags">
-                    <span class="blog-tag">AI</span>
-                    <span class="blog-tag cyan">CLI 工具</span>
-                    <span class="blog-tag green">TypeScript</span>
+                    <span class="blog-tag red">APISIX</span>
+                    <span class="blog-tag cyan">Lua</span>
+                    <span class="blog-tag green">API 网关</span>
                     <span class="blog-tag">源码解析</span>
                 </div>
                 <div class="blog-card-arrow">阅读全文 &rarr;</div>
             </a>
 
-            <!-- SkyWalking Java Agent -->
+            <a class="blog-card" href="apisix-plugin-order.html">
+                <div class="blog-card-icon" style="background:linear-gradient(135deg,#ef4444,#f97316);">AP</div>
+                <h3>APISIX 插件执行顺序深度解析</h3>
+                <p class="blog-desc">
+                    Apache APISIX 插件执行顺序的源码级剖析。从全局规则到路由插件、从 Priority 排序到阶段调度，涵盖 Global Rules、Service/Plugin Config/Consumer 合并策略、_meta.priority 自定义优先级、rewrite/access/log 各阶段执行机制。
+                </p>
+                <div class="blog-card-tags">
+                    <span class="blog-tag red">APISIX</span>
+                    <span class="blog-tag cyan">Lua</span>
+                    <span class="blog-tag green">插件系统</span>
+                    <span class="blog-tag">源码解析</span>
+                </div>
+                <div class="blog-card-arrow">阅读全文 &rarr;</div>
+            </a>
+
+        </div>
+
+        <!-- ========== 可观测性 ========== -->
+        <div class="project-bar">
+            <div class="project-icon" style="background:linear-gradient(135deg,#06b6d4,#6366f1);">OB</div>
+            <h2>可观测性</h2>
+            <span class="project-desc">APM / Tracing / Metrics / Logging</span>
+        </div>
+        <div class="blog-grid">
+
             <a class="blog-card" href="skywalking-agent.html">
                 <div class="blog-card-icon" style="background:linear-gradient(135deg,#06b6d4,#6366f1);">SW</div>
                 <h3>SkyWalking Java Agent 源码解析</h3>
@@ -168,7 +226,6 @@
                 <div class="blog-card-arrow">阅读全文 &rarr;</div>
             </a>
 
-            <!-- OpenTelemetry Collector Contrib -->
             <a class="blog-card" href="otel-collector-contrib.html">
                 <div class="blog-card-icon" style="background:linear-gradient(135deg,#f97316,#8b5cf6);">OT</div>
                 <h3>OTel Collector Contrib 源码解析</h3>
@@ -184,17 +241,26 @@
                 <div class="blog-card-arrow">阅读全文 &rarr;</div>
             </a>
 
-            <!-- APISIX Plugin Order -->
-            <a class="blog-card" href="apisix-plugin-order.html">
-                <div class="blog-card-icon" style="background:linear-gradient(135deg,#ef4444,#f97316);">AP</div>
-                <h3>APISIX 插件执行顺序深度解析</h3>
+        </div>
+
+        <!-- ========== AI 工具 ========== -->
+        <div class="project-bar">
+            <div class="project-icon" style="background:linear-gradient(135deg,#8b5cf6,#6366f1);">AI</div>
+            <h2>AI 工具</h2>
+            <span class="project-desc">AI 编程助手 / CLI 工具</span>
+        </div>
+        <div class="blog-grid">
+
+            <a class="blog-card" href="claude-code.html">
+                <div class="blog-card-icon" style="background:linear-gradient(135deg,#8b5cf6,#6366f1);">&#8984;</div>
+                <h3>Claude Code 完全教程</h3>
                 <p class="blog-desc">
-                    Apache APISIX 插件执行顺序的源码级剖析。从全局规则到路由插件、从 Priority 排序到阶段调度，涵盖 Global Rules、Service/Plugin Config/Consumer 合并策略、_meta.priority 自定义优先级、rewrite/access/log 各阶段执行机制。
+                    Anthropic 官方 CLI 工具的使用指南与源码深度解析。涵盖安装配置、斜杠命令、内置工具、权限模式、MCP 服务器，以及 Agent 核心循环、工具系统、API 调用层、系统提示词架构等源码分析。
                 </p>
                 <div class="blog-card-tags">
-                    <span class="blog-tag orange">APISIX</span>
-                    <span class="blog-tag cyan">Lua</span>
-                    <span class="blog-tag green">API 网关</span>
+                    <span class="blog-tag">AI</span>
+                    <span class="blog-tag cyan">CLI 工具</span>
+                    <span class="blog-tag green">TypeScript</span>
                     <span class="blog-tag">源码解析</span>
                 </div>
                 <div class="blog-card-arrow">阅读全文 &rarr;</div>
