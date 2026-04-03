@@ -1,0 +1,1822 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apache APISIX 插件执行顺序深度解析 — 从全局规则到路由插件的完整执行链路</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/lua.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+</head>
+<body>
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo" style="background:linear-gradient(135deg,#ef4444,#f97316);">AP</div>
+            <h2>APISIX 插件执行顺序</h2>
+            <p class="version">Apache APISIX &middot; 源码深度解析</p>
+        </div>
+        <ul class="nav-list">
+            <li class="nav-group-title">概览</li>
+            <li><a href="#intro" class="nav-link active" data-section="intro">为什么要理解插件执行顺序</a></li>
+            <li><a href="#architecture" class="nav-link" data-section="architecture">整体架构概览</a></li>
+
+            <li class="nav-group-title">请求生命周期</li>
+            <li><a href="#lifecycle" class="nav-link" data-section="lifecycle">HTTP 请求完整生命周期</a></li>
+            <li><a href="#phases" class="nav-link" data-section="phases">OpenResty 阶段详解</a></li>
+
+            <li class="nav-group-title">插件加载与排序</li>
+            <li><a href="#plugin-load" class="nav-link" data-section="plugin-load">插件加载机制</a></li>
+            <li><a href="#priority" class="nav-link" data-section="priority">Priority 优先级排序</a></li>
+            <li><a href="#priority-table" class="nav-link" data-section="priority-table">内置插件优先级速查表</a></li>
+
+            <li class="nav-group-title">全局规则与路由插件</li>
+            <li><a href="#global-rules" class="nav-link" data-section="global-rules">Global Rules 全局规则</a></li>
+            <li><a href="#route-plugins" class="nav-link" data-section="route-plugins">Route 路由插件</a></li>
+            <li><a href="#global-vs-route" class="nav-link" data-section="global-vs-route">全局与路由的执行关系</a></li>
+
+            <li class="nav-group-title">插件合并策略</li>
+            <li><a href="#service-merge" class="nav-link" data-section="service-merge">Service 与 Route 合并</a></li>
+            <li><a href="#plugin-config-merge" class="nav-link" data-section="plugin-config-merge">Plugin Config 合并</a></li>
+            <li><a href="#consumer-merge" class="nav-link" data-section="consumer-merge">Consumer 插件合并</a></li>
+
+            <li class="nav-group-title">高级机制</li>
+            <li><a href="#custom-priority" class="nav-link" data-section="custom-priority">_meta.priority 自定义优先级</a></li>
+            <li><a href="#meta-filter" class="nav-link" data-section="meta-filter">_meta.filter 条件执行</a></li>
+            <li><a href="#meta-disable" class="nav-link" data-section="meta-disable">_meta.disable 禁用插件</a></li>
+
+            <li class="nav-group-title">各阶段执行详解</li>
+            <li><a href="#rewrite-phase" class="nav-link" data-section="rewrite-phase">Rewrite 阶段</a></li>
+            <li><a href="#access-phase" class="nav-link" data-section="access-phase">Access 阶段</a></li>
+            <li><a href="#header-body-filter" class="nav-link" data-section="header-body-filter">Header/Body Filter 阶段</a></li>
+            <li><a href="#log-phase" class="nav-link" data-section="log-phase">Log 阶段</a></li>
+
+            <li class="nav-group-title">实战与总结</li>
+            <li><a href="#flow-example" class="nav-link" data-section="flow-example">完整请求流转示例</a></li>
+            <li><a href="#summary" class="nav-link" data-section="summary">总结与最佳实践</a></li>
+
+            <li class="nav-group-title">导航</li>
+            <li><a href="index.html" class="nav-link" style="color:var(--accent-cyan);">&larr; 返回博客主页</a></li>
+        </ul>
+    </nav>
+
+    <button class="sidebar-toggle" id="sidebarToggle">&#9776;</button>
+
+    <main class="content" id="content">
+
+        <!-- ============================== -->
+        <!-- Part Header                     -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">源码深度解析</span>
+            <h1 class="part-title">Apache APISIX 插件执行顺序</h1>
+            <p class="part-desc">从全局规则到路由插件、从 Priority 排序到阶段调度，逐层拆解 APISIX 插件引擎的执行链路</p>
+        </div>
+
+        <!-- ============================== -->
+        <!-- 01 为什么要理解插件执行顺序        -->
+        <!-- ============================== -->
+
+        <section id="intro" class="section">
+            <div class="section-header">
+                <span class="section-number">01</span>
+                <h1>为什么要理解插件执行顺序</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>插件执行顺序决定了 API 网关的行为</h3>
+                <p>Apache APISIX 是一个基于 OpenResty 的高性能 API 网关，其核心能力由 <strong>插件系统</strong> 驱动。一个请求从进入网关到返回响应，可能经过数十个插件的处理。插件的执行顺序直接决定了：认证在限流之前还是之后？请求改写在鉴权之前还是之后？日志记录能否捕获到完整的上下文信息？</p>
+            </div>
+            <div class="card">
+                <h3>理解执行顺序的关键维度</h3>
+                <p>APISIX 插件的执行顺序由以下四个维度共同决定：</p>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#ef4444,#f97316);">P</div>
+                        <h4>Priority 优先级</h4>
+                        <p>每个插件定义了一个 <code>priority</code> 数值，数值越大越先执行。这是同一阶段内插件执行顺序的决定因素</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#8b5cf6,#6366f1);">G</div>
+                        <h4>Global Rules 全局规则</h4>
+                        <p>全局规则中的插件 <strong>始终先于</strong> 路由插件执行，无论优先级如何</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#06b6d4,#3b82f6);">S</div>
+                        <h4>Phases 执行阶段</h4>
+                        <p>OpenResty 的请求生命周期分为 rewrite、access、header_filter、body_filter、log 等阶段，每个阶段独立执行插件</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#22c55e,#16a34a);">M</div>
+                        <h4>Merge 合并策略</h4>
+                        <p>Service、Plugin Config、Consumer 的插件通过特定的合并策略与 Route 插件融合</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 02 整体架构概览                   -->
+        <!-- ============================== -->
+
+        <section id="architecture" class="section">
+            <div class="section-header">
+                <span class="section-number">02</span>
+                <h1>整体架构概览</h1>
+            </div>
+            <div class="card">
+                <h3>APISIX 插件引擎在请求处理中的位置</h3>
+                <p>APISIX 的请求处理流程建立在 OpenResty 的阶段模型之上。每个阶段中，插件引擎按照优先级从高到低依次调用各插件对应阶段的处理函数：</p>
+<pre><code class="language-lua">-- apisix/init.lua 核心入口
+-- OpenResty 阶段 → APISIX Handler → 插件引擎
+--
+-- access_by_lua     → http_access_phase()     → 全局规则(rewrite+access) → 路由插件(rewrite+access)
+-- header_filter_by_lua → http_header_filter_phase() → 全局规则(header_filter) → 路由插件(header_filter)
+-- body_filter_by_lua   → http_body_filter_phase()   → 全局规则(body_filter) → 路由插件(body_filter)
+-- log_by_lua           → http_log_phase()            → 全局规则(log) → 路由插件(log)</code></pre>
+            </div>
+            <div class="card">
+                <h3>插件引擎的核心数据结构</h3>
+                <p>在 APISIX 内部，插件列表以 <strong>扁平数组</strong> 的形式存储，每两个元素为一组：<code>plugins[i]</code> 是插件对象（包含处理函数），<code>plugins[i+1]</code> 是该插件的配置。这种设计避免了额外的对象分配开销：</p>
+<pre><code class="language-lua">-- plugins 数组结构：
+-- plugins[1] = plugin_obj_A   (插件对象，包含 rewrite/access/log 等方法)
+-- plugins[2] = plugin_conf_A  (插件配置，包含用户设定的参数和 _meta)
+-- plugins[3] = plugin_obj_B
+-- plugins[4] = plugin_conf_B
+-- ...
+-- 遍历时步长为 2：
+for i = 1, #plugins, 2 do
+    local plugin_obj  = plugins[i]
+    local plugin_conf = plugins[i + 1]
+    plugin_obj.rewrite(plugin_conf, api_ctx)
+end</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 03 HTTP 请求完整生命周期          -->
+        <!-- ============================== -->
+
+        <section id="lifecycle" class="section">
+            <div class="section-header">
+                <span class="section-number">03</span>
+                <h1>HTTP 请求完整生命周期</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>从进入网关到返回响应的完整链路</h3>
+                <p>以下是一个 HTTP 请求在 APISIX 中的完整处理流程，标注了插件在每个环节的执行时机：</p>
+            </div>
+            <div class="card">
+                <h3>http_access_phase() — 请求处理主入口</h3>
+                <p>这是整个插件执行链路的核心函数，定义在 <code>apisix/init.lua:571</code>：</p>
+<pre><code class="language-lua">function _M.http_access_phase()
+    -- 1. 创建请求上下文
+    local api_ctx = core.tablepool.fetch("api_ctx", 0, 32)
+
+    -- 2. 路由匹配
+    router.router_http.match(api_ctx)
+    local route = api_ctx.matched_route
+
+    -- 3. 即使没有匹配路由，也执行全局规则
+    if not route then
+        local global_rules = apisix_global_rules.global_rules()
+        plugin.run_global_rules(api_ctx, global_rules, nil)
+        return core.response.exit(404, {error_msg = "404 Route Not Found"})
+    end
+
+    -- 4. 合并 Plugin Config（如果有）
+    if route.value.plugin_config_id then
+        local conf = plugin_config.get(route.value.plugin_config_id)
+        route = plugin_config.merge(route, conf)
+    end
+
+    -- 5. 合并 Service（如果有）
+    if route.value.service_id then
+        local service = service_fetch(route.value.service_id)
+        route = plugin.merge_service_route(service, route)
+    end
+
+    -- 6. ★ 执行全局规则（rewrite + access 阶段）
+    local global_rules = apisix_global_rules.global_rules()
+    plugin.run_global_rules(api_ctx, global_rules, nil)
+
+    -- 7. ★ 过滤并排序路由插件
+    local plugins = plugin.filter(api_ctx, route)
+
+    -- 8. ★ 执行路由插件的 rewrite 阶段
+    plugin.run_plugin("rewrite", plugins, api_ctx)
+
+    -- 9. ★ 识别 Consumer 并合并插件
+    if api_ctx.consumer then
+        route, changed = plugin.merge_consumer_route(route, api_ctx.consumer, ...)
+        if changed then
+            -- 重新过滤插件并执行 consumer 中新增插件的 rewrite
+            api_ctx.plugins = plugin.filter(api_ctx, route, api_ctx.plugins, nil, "rewrite_in_consumer")
+            plugin.run_plugin("rewrite_in_consumer", api_ctx.plugins, api_ctx)
+        end
+    end
+
+    -- 10. ★ 执行路由插件的 access 阶段
+    plugin.run_plugin("access", plugins, api_ctx)
+
+    -- 11. 转发到上游
+    _M.handle_upstream(api_ctx, route, enable_websocket)
+end</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>后续阶段 — common_phase 统一调度</h3>
+                <p>header_filter、body_filter、log 阶段通过 <code>common_phase()</code> 统一调度，定义在 <code>apisix/init.lua:445</code>：</p>
+<pre><code class="language-lua">local function common_phase(phase_name)
+    local api_ctx = ngx.ctx.api_ctx
+    if not api_ctx then
+        return
+    end
+
+    -- ★ 先执行全局规则中该阶段的插件
+    plugin.run_global_rules(api_ctx, api_ctx.global_rules, phase_name)
+
+    -- ★ 再执行路由插件中该阶段的插件
+    return plugin.run_plugin(phase_name, nil, api_ctx)
+end
+
+-- 调用示例：
+function _M.http_header_filter_phase()
+    common_phase("header_filter")    -- 全局规则 header_filter → 路由插件 header_filter
+end
+
+function _M.http_body_filter_phase()
+    common_phase("body_filter")       -- 全局规则 body_filter → 路由插件 body_filter
+    common_phase("delayed_body_filter")
+end
+
+function _M.http_log_phase()
+    local api_ctx = common_phase("log")  -- 全局规则 log → 路由插件 log
+    -- 清理资源...
+end</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 04 OpenResty 阶段详解            -->
+        <!-- ============================== -->
+
+        <section id="phases" class="section">
+            <div class="section-header">
+                <span class="section-number">04</span>
+                <h1>OpenResty 阶段详解</h1>
+            </div>
+            <div class="card">
+                <h3>APISIX 使用的执行阶段</h3>
+                <p>APISIX 的插件可以在以下阶段定义处理函数。每个阶段有不同的特性：</p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>阶段</th>
+                            <th>对应 OpenResty 阶段</th>
+                            <th>特性</th>
+                            <th>典型用途</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>rewrite</code></td>
+                            <td>access_by_lua</td>
+                            <td>可中断请求（返回 code + body）</td>
+                            <td>URI 改写、请求变换、鉴权</td>
+                        </tr>
+                        <tr>
+                            <td><code>access</code></td>
+                            <td>access_by_lua</td>
+                            <td>可中断请求（返回 code + body）</td>
+                            <td>限流、访问控制、代理</td>
+                        </tr>
+                        <tr>
+                            <td><code>header_filter</code></td>
+                            <td>header_filter_by_lua</td>
+                            <td>不可中断，仅处理响应头</td>
+                            <td>修改响应头、CORS 处理</td>
+                        </tr>
+                        <tr>
+                            <td><code>body_filter</code></td>
+                            <td>body_filter_by_lua</td>
+                            <td>不可中断，流式处理响应体</td>
+                            <td>响应体改写、压缩</td>
+                        </tr>
+                        <tr>
+                            <td><code>delayed_body_filter</code></td>
+                            <td>body_filter_by_lua</td>
+                            <td>不可中断，在 body_filter 之后执行</td>
+                            <td>延迟的响应体处理</td>
+                        </tr>
+                        <tr>
+                            <td><code>log</code></td>
+                            <td>log_by_lua</td>
+                            <td>不可中断，请求已完成</td>
+                            <td>日志记录、指标上报</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h3>阶段分类：可中断 vs 不可中断</h3>
+                <p>APISIX 的 <code>run_plugin()</code> 函数对两类阶段有不同的处理逻辑（<code>apisix/plugin.lua:1129</code>）：</p>
+<pre><code class="language-lua">function _M.run_plugin(phase, plugins, api_ctx)
+    if phase ~= "log"
+        and phase ~= "header_filter"
+        and phase ~= "body_filter"
+        and phase ~= "delayed_body_filter"
+    then
+        -- ★ 可中断阶段（rewrite / access）
+        for i = 1, #plugins, 2 do
+            local code, body = phase_func(conf, api_ctx)
+            if code or body then
+                if code >= 400 then
+                    -- 使用 _meta.error_response 自定义错误响应
+                    if conf._meta and conf._meta.error_response then
+                        body = conf._meta.error_response
+                    end
+                end
+                core.response.exit(code, body)  -- ★ 直接中断请求
+            end
+        end
+    else
+        -- ★ 不可中断阶段（header_filter / body_filter / log）
+        for i = 1, #plugins, 2 do
+            phase_func(conf, api_ctx)  -- 只调用，不处理返回值
+        end
+    end
+end</code></pre>
+                <div class="info-box">
+                    <strong>关键区别：</strong>在 rewrite 和 access 阶段，插件返回的 HTTP 状态码会 <strong>立即中断</strong> 后续所有插件的执行并返回响应。而在 header_filter、body_filter、log 阶段，所有插件都会被执行，不会被中断。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 05 插件加载机制                   -->
+        <!-- ============================== -->
+
+        <section id="plugin-load" class="section">
+            <div class="section-header">
+                <span class="section-number">05</span>
+                <h1>插件加载机制</h1>
+            </div>
+            <div class="card">
+                <h3>插件加载流程</h3>
+                <p>APISIX 通过 <code>apisix/plugin.lua</code> 中的 <code>load_plugin()</code> 函数加载每个插件。每个插件必须是一个 Lua 模块，并且必须定义以下字段：</p>
+<pre><code class="language-lua">-- apisix/plugin.lua:122 - load_plugin 函数
+local function load_plugin(name, plugins_list, plugin_type)
+    local pkg_name = "apisix.plugins." .. name
+    local ok, plugin = pcall(require, pkg_name)
+
+    if not ok then
+        core.log.error("failed to load plugin [", name, "] err: ", plugin)
+        return
+    end
+
+    -- ★ 必须有 priority 字段
+    if not plugin.priority then
+        core.log.error("invalid plugin [", name, "], missing field: priority")
+        return
+    end
+
+    -- ★ 必须有 version 字段
+    if not plugin.version then
+        core.log.error("invalid plugin [", name, "] missing field: version")
+        return
+    end
+
+    -- ★ 自动注入 _meta schema（包含 disable / priority / filter / error_response）
+    local properties = plugin.schema.properties
+    local plugin_injected_schema = core.schema.plugin_injected_schema
+    properties._meta = plugin_injected_schema._meta
+
+    plugin.name = name
+    plugin.attr = plugin_attr(name)
+    core.table.insert(plugins_list, plugin)
+end</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>全局插件列表排序</h3>
+                <p>所有插件加载完成后，会按 <code>priority</code> <strong>降序排列</strong>（<code>apisix/plugin.lua:227</code>）：</p>
+<pre><code class="language-lua">-- 排序函数：priority 越大，在数组中越靠前
+local function sort_plugin(l, r)
+    return l.priority > r.priority
+end
+
+-- load() 函数中的排序
+local function load(plugin_names, wasm_plugin_names)
+    -- ... 加载所有插件 ...
+
+    -- ★ 按 priority 降序排列
+    if #local_plugins > 1 then
+        sort_tab(local_plugins, sort_plugin)
+    end
+
+    -- 调试模式下输出排序结果
+    for i, plugin in ipairs(local_plugins) do
+        local_plugins_hash[plugin.name] = plugin
+        if enable_debug() then
+            core.log.warn("loaded plugin and sort by priority:",
+                          " ", plugin.priority,
+                          " name: ", plugin.name)
+        end
+    end
+end</code></pre>
+                <div class="info-box">
+                    <strong>核心规则：</strong><code>local_plugins</code> 是一个按 priority 降序排列的全局数组。后续为每个请求过滤插件时（<code>plugin.filter()</code>），都按照这个数组的顺序遍历，从而保证高优先级插件先执行。
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>_meta Schema 自动注入</h3>
+                <p>每个插件的 schema 会被自动注入 <code>_meta</code> 字段（<code>apisix/schema_def.lua:1012</code>），提供以下能力：</p>
+<pre><code class="language-lua">plugin_injected_schema = {
+    _meta = {
+        type = "object",
+        properties = {
+            disable = {     -- ★ 禁用插件实例
+                type = "boolean"
+            },
+            error_response = {  -- ★ 自定义错误响应
+                oneOf = {
+                    { type = "string" },
+                    { type = "object" }
+                }
+            },
+            priority = {    -- ★ 覆盖插件默认优先级
+                description = "priority of plugins by customized order",
+                type = "integer"
+            },
+            filter = {      -- ★ 条件执行过滤器
+                description = "filter determines whether the plugin ...",
+                type = "array"
+            }
+        }
+    }
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 06 Priority 优先级排序           -->
+        <!-- ============================== -->
+
+        <section id="priority" class="section">
+            <div class="section-header">
+                <span class="section-number">06</span>
+                <h1>Priority 优先级排序</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>Priority 是同一阶段内插件执行顺序的唯一决定因素</h3>
+                <p>在同一个执行阶段（如 rewrite、access）内，插件按照 <code>priority</code> 值 <strong>从大到小</strong> 执行。priority 值越大，越先执行，越接近客户端。</p>
+            </div>
+            <div class="card">
+                <h3>Priority 的设计思想</h3>
+                <p>APISIX 的 priority 值设计遵循清晰的分层逻辑：</p>
+<pre><code class="language-yaml"># Priority 分层设计
+#
+# 23000-21000  网络层处理     real-ip, client-control, proxy-control
+# 12000-12015  请求追踪       request-id, zipkin, skywalking, opentelemetry
+# 11000-10000  预处理         fault-injection, mocking, serverless-pre-function
+# 4000-3000    安全防护       cors, ip-restriction, ua-restriction, csrf
+# 2800-2000    认证鉴权       key-auth, jwt-auth, basic-auth, hmac-auth, authz-keycloak
+# 1085-999     流量控制       proxy-cache, proxy-rewrite, limit-conn, limit-count, limit-req
+# 966-900      路由控制       traffic-split, redirect, response-rewrite
+# 509-501      协议转换       degraphql, kafka-proxy, dubbo-proxy, grpc-transcode
+# 500-397      监控日志       prometheus, datadog, http-logger, kafka-logger
+# 0 ~ -4000   后处理         serverless-post-function, ext-plugin-post-req/resp</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>filter() 函数：按全局顺序过滤路由插件</h3>
+                <p><code>plugin.filter()</code>（<code>apisix/plugin.lua:466</code>）负责为每个请求构建插件执行列表：</p>
+<pre><code class="language-lua">function _M.filter(ctx, conf, plugins, route_conf, phase)
+    local user_plugin_conf = conf.value.plugins
+
+    local custom_sort = false
+    plugins = plugins or core.tablepool.fetch("plugins", 32, 0)
+
+    -- ★ 按全局 local_plugins 的顺序（已按 priority 降序排列）遍历
+    for _, plugin_obj in ipairs(local_plugins) do
+        local name = plugin_obj.name
+        local plugin_conf = user_plugin_conf[name]
+
+        if type(plugin_conf) ~= "table" then
+            goto continue  -- 路由未启用此插件，跳过
+        end
+
+        if not check_disable(plugin_conf) then  -- 未被 _meta.disable 禁用
+            -- 检测是否有自定义优先级
+            if plugin_conf._meta and plugin_conf._meta.priority then
+                custom_sort = true
+            end
+            core.table.insert(plugins, plugin_obj)   -- 偶数下标：插件对象
+            core.table.insert(plugins, plugin_conf)  -- 奇数下标：插件配置
+        end
+
+        ::continue::
+    end
+
+    -- ★ 如果有任何插件设置了 _meta.priority，则重新按自定义优先级排序
+    if custom_sort then
+        -- 为未设置 _meta.priority 的插件，用默认 priority 填充
+        for i = 1, #plugins, 2 do
+            local plugin_conf = plugins[i + 1]
+            if not plugin_conf._meta then
+                plugin_conf._meta = { priority = plugins[i].priority }
+            elseif not plugin_conf._meta.priority then
+                plugin_conf._meta.priority = plugins[i].priority
+            end
+        end
+
+        -- 按 _meta.priority 降序重新排列
+        sort_tab(tmp_plugin_confs, custom_sort_plugin)
+    end
+
+    return plugins
+end</code></pre>
+                <div class="info-box">
+                    <strong>重点：</strong>默认情况下，<code>filter()</code> 按照全局 <code>local_plugins</code> 数组的顺序遍历，天然保持 priority 降序。只有当某个插件实例设置了 <code>_meta.priority</code> 时，才会触发重新排序。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 07 内置插件优先级速查表          -->
+        <!-- ============================== -->
+
+        <section id="priority-table" class="section">
+            <div class="section-header">
+                <span class="section-number">07</span>
+                <h1>内置插件优先级速查表</h1>
+            </div>
+            <div class="card">
+                <h3>常用插件 Priority 一览（按执行顺序）</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Priority</th>
+                            <th>插件名称</th>
+                            <th>分类</th>
+                            <th>主要阶段</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="background:rgba(239,68,68,.06);">
+                            <td><code>23000</code></td>
+                            <td><strong>real-ip</strong></td>
+                            <td>网络</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(239,68,68,.06);">
+                            <td><code>22000</code></td>
+                            <td><strong>client-control</strong></td>
+                            <td>网络</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(239,68,68,.06);">
+                            <td><code>21990</code></td>
+                            <td><strong>proxy-control</strong></td>
+                            <td>网络</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(139,92,246,.06);">
+                            <td><code>12015</code></td>
+                            <td><strong>request-id</strong></td>
+                            <td>追踪</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(139,92,246,.06);">
+                            <td><code>12011</code></td>
+                            <td><strong>zipkin</strong></td>
+                            <td>追踪</td>
+                            <td>rewrite + log</td>
+                        </tr>
+                        <tr style="background:rgba(139,92,246,.06);">
+                            <td><code>12010</code></td>
+                            <td><strong>skywalking</strong></td>
+                            <td>追踪</td>
+                            <td>rewrite + log</td>
+                        </tr>
+                        <tr style="background:rgba(139,92,246,.06);">
+                            <td><code>12009</code></td>
+                            <td><strong>opentelemetry</strong></td>
+                            <td>追踪</td>
+                            <td>rewrite + log</td>
+                        </tr>
+                        <tr style="background:rgba(139,92,246,.06);">
+                            <td><code>12000</code></td>
+                            <td><strong>ext-plugin-pre-req</strong></td>
+                            <td>外部钩子</td>
+                            <td>rewrite/access</td>
+                        </tr>
+                        <tr style="background:rgba(245,158,11,.06);">
+                            <td><code>11000</code></td>
+                            <td><strong>fault-injection</strong></td>
+                            <td>测试</td>
+                            <td>rewrite + access</td>
+                        </tr>
+                        <tr style="background:rgba(245,158,11,.06);">
+                            <td><code>10000</code></td>
+                            <td><strong>serverless-pre-function</strong></td>
+                            <td>Serverless</td>
+                            <td>rewrite + access + header_filter + body_filter + log</td>
+                        </tr>
+                        <tr style="background:rgba(6,182,212,.06);">
+                            <td><code>4010</code></td>
+                            <td><strong>batch-requests</strong></td>
+                            <td>HTTP</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(6,182,212,.06);">
+                            <td><code>4000</code></td>
+                            <td><strong>cors</strong></td>
+                            <td>安全</td>
+                            <td>rewrite + header_filter</td>
+                        </tr>
+                        <tr style="background:rgba(6,182,212,.06);">
+                            <td><code>3000</code></td>
+                            <td><strong>ip-restriction</strong></td>
+                            <td>安全</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(6,182,212,.06);">
+                            <td><code>2999</code></td>
+                            <td><strong>ua-restriction</strong></td>
+                            <td>安全</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(6,182,212,.06);">
+                            <td><code>2990</code></td>
+                            <td><strong>referer-restriction</strong></td>
+                            <td>安全</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(6,182,212,.06);">
+                            <td><code>2980</code></td>
+                            <td><strong>csrf</strong></td>
+                            <td>安全</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(34,197,94,.06);">
+                            <td><code>2600</code></td>
+                            <td><strong>multi-auth</strong></td>
+                            <td>认证</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(34,197,94,.06);">
+                            <td><code>2599</code></td>
+                            <td><strong>openid-connect</strong></td>
+                            <td>认证</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(34,197,94,.06);">
+                            <td><code>2530</code></td>
+                            <td><strong>hmac-auth</strong></td>
+                            <td>认证</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(34,197,94,.06);">
+                            <td><code>2520</code></td>
+                            <td><strong>basic-auth</strong></td>
+                            <td>认证</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(34,197,94,.06);">
+                            <td><code>2510</code></td>
+                            <td><strong>jwt-auth</strong></td>
+                            <td>认证</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(34,197,94,.06);">
+                            <td><code>2500</code></td>
+                            <td><strong>key-auth</strong></td>
+                            <td>认证</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(34,197,94,.06);">
+                            <td><code>2400</code></td>
+                            <td><strong>consumer-restriction</strong></td>
+                            <td>授权</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(34,197,94,.06);">
+                            <td><code>2000</code></td>
+                            <td><strong>authz-keycloak</strong></td>
+                            <td>授权</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(99,102,241,.06);">
+                            <td><code>1085</code></td>
+                            <td><strong>proxy-cache</strong></td>
+                            <td>缓存</td>
+                            <td>access + header_filter + body_filter</td>
+                        </tr>
+                        <tr style="background:rgba(99,102,241,.06);">
+                            <td><code>1008</code></td>
+                            <td><strong>proxy-rewrite</strong></td>
+                            <td>路由</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(99,102,241,.06);">
+                            <td><code>1003</code></td>
+                            <td><strong>limit-conn</strong></td>
+                            <td>限流</td>
+                            <td>access + log</td>
+                        </tr>
+                        <tr style="background:rgba(99,102,241,.06);">
+                            <td><code>1002</code></td>
+                            <td><strong>limit-count</strong></td>
+                            <td>限流</td>
+                            <td>access + log</td>
+                        </tr>
+                        <tr style="background:rgba(99,102,241,.06);">
+                            <td><code>1001</code></td>
+                            <td><strong>limit-req</strong></td>
+                            <td>限流</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(99,102,241,.06);">
+                            <td><code>966</code></td>
+                            <td><strong>traffic-split</strong></td>
+                            <td>路由</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(99,102,241,.06);">
+                            <td><code>900</code></td>
+                            <td><strong>redirect</strong></td>
+                            <td>路由</td>
+                            <td>rewrite</td>
+                        </tr>
+                        <tr style="background:rgba(99,102,241,.06);">
+                            <td><code>899</code></td>
+                            <td><strong>response-rewrite</strong></td>
+                            <td>变换</td>
+                            <td>rewrite + header_filter + body_filter</td>
+                        </tr>
+                        <tr>
+                            <td><code>506</code></td>
+                            <td><strong>grpc-transcode</strong></td>
+                            <td>协议</td>
+                            <td>access + header_filter + body_filter</td>
+                        </tr>
+                        <tr>
+                            <td><code>500</code></td>
+                            <td><strong>prometheus</strong></td>
+                            <td>监控</td>
+                            <td>log</td>
+                        </tr>
+                        <tr>
+                            <td><code>410</code></td>
+                            <td><strong>http-logger</strong></td>
+                            <td>日志</td>
+                            <td>log</td>
+                        </tr>
+                        <tr>
+                            <td><code>403</code></td>
+                            <td><strong>kafka-logger</strong></td>
+                            <td>日志</td>
+                            <td>log</td>
+                        </tr>
+                        <tr>
+                            <td><code>399</code></td>
+                            <td><strong>file-logger</strong></td>
+                            <td>日志</td>
+                            <td>log</td>
+                        </tr>
+                        <tr style="background:rgba(239,68,68,.04);">
+                            <td><code>-2000</code></td>
+                            <td><strong>serverless-post-function</strong></td>
+                            <td>Serverless</td>
+                            <td>全阶段</td>
+                        </tr>
+                        <tr style="background:rgba(239,68,68,.04);">
+                            <td><code>-3000</code></td>
+                            <td><strong>ext-plugin-post-req</strong></td>
+                            <td>外部钩子</td>
+                            <td>access</td>
+                        </tr>
+                        <tr style="background:rgba(239,68,68,.04);">
+                            <td><code>-4000</code></td>
+                            <td><strong>ext-plugin-post-resp</strong></td>
+                            <td>外部钩子</td>
+                            <td>header_filter + body_filter</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="info-box">
+                    <strong>负数 Priority：</strong>priority 为负数的插件在所有正数插件之后执行。如 <code>serverless-post-function</code>（-2000）保证在请求处理的最后阶段运行，<code>ext-plugin-post-resp</code>（-4000）则在最末尾处理响应。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 08 Global Rules 全局规则        -->
+        <!-- ============================== -->
+
+        <section id="global-rules" class="section">
+            <div class="section-header">
+                <span class="section-number">08</span>
+                <h1>Global Rules 全局规则</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>全局规则：无条件对所有请求生效的插件</h3>
+                <p>Global Rules（全局规则）是独立于路由定义的插件配置，存储在 etcd 的 <code>/global_rules</code> 路径下。它们对 <strong>所有请求</strong> 生效，包括未匹配到任何路由的 404 请求。</p>
+            </div>
+            <div class="card">
+                <h3>全局规则的执行机制</h3>
+                <p><code>run_global_rules()</code> 函数（<code>apisix/plugin.lua:1251</code>）逐条遍历全局规则并执行其中的插件：</p>
+<pre><code class="language-lua">function _M.run_global_rules(api_ctx, global_rules, phase_name)
+    if global_rules and #global_rules > 0 then
+        -- ★ 保存原始上下文信息
+        local orig_conf_type = api_ctx.conf_type
+        local orig_conf_version = api_ctx.conf_version
+        local orig_conf_id = api_ctx.conf_id
+
+        local plugins = core.tablepool.fetch("plugins", 32, 0)
+        local route = api_ctx.matched_route
+
+        -- ★ 遍历每条全局规则
+        for _, global_rule in config_util.iterate_values(values) do
+            api_ctx.conf_type = "global_rule"
+            api_ctx.conf_version = global_rule.modifiedIndex
+            api_ctx.conf_id = global_rule.value.id
+
+            -- ★ 过滤出该规则中启用的插件
+            core.table.clear(plugins)
+            plugins = _M.filter(api_ctx, global_rule, plugins, route)
+
+            if phase_name == nil then
+                -- ★ access 阶段入口：同时执行 rewrite + access
+                _M.run_plugin("rewrite", plugins, api_ctx)
+                _M.run_plugin("access", plugins, api_ctx)
+            else
+                -- ★ 其他阶段：只执行指定阶段
+                _M.run_plugin(phase_name, plugins, api_ctx)
+            end
+        end
+
+        -- ★ 恢复原始上下文信息
+        api_ctx.conf_type = orig_conf_type
+        api_ctx.conf_version = orig_conf_version
+        api_ctx.conf_id = orig_conf_id
+    end
+end</code></pre>
+            </div>
+            <div class="card">
+                <h3>全局规则配置示例</h3>
+<pre><code class="language-bash"># 创建全局规则：对所有请求开启 prometheus 监控和限流
+curl http://127.0.0.1:9180/apisix/admin/global_rules/1 -X PUT -d '
+{
+    "plugins": {
+        "prometheus": {},
+        "limit-count": {
+            "count": 1000,
+            "time_window": 60,
+            "rejected_code": 429
+        }
+    }
+}'</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 09 Route 路由插件               -->
+        <!-- ============================== -->
+
+        <section id="route-plugins" class="section">
+            <div class="section-header">
+                <span class="section-number">09</span>
+                <h1>Route 路由插件</h1>
+            </div>
+            <div class="card">
+                <h3>路由插件的绑定层次</h3>
+                <p>路由插件可以通过多种方式配置，APISIX 在处理请求时会将它们合并为最终的插件列表：</p>
+<pre><code class="language-yaml"># 插件可以来自以下四个层级：
+
+# 1. Route 直接配置
+Route:
+  uri: /api/v1/*
+  plugins:
+    key-auth: {}
+    proxy-rewrite:
+      uri: /backend$uri
+
+# 2. Service 绑定的插件（Route 通过 service_id 引用）
+Service:
+  plugins:
+    limit-count:
+      count: 100
+
+# 3. Plugin Config 共享配置（Route 通过 plugin_config_id 引用）
+Plugin Config:
+  plugins:
+    prometheus: {}
+    http-logger:
+      uri: "http://log-server/log"
+
+# 4. Consumer 插件（认证后绑定）
+Consumer:
+  username: "user_A"
+  plugins:
+    limit-count:
+      count: 50
+      group: "user_A_group"</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 10 全局与路由的执行关系          -->
+        <!-- ============================== -->
+
+        <section id="global-vs-route" class="section">
+            <div class="section-header">
+                <span class="section-number">10</span>
+                <h1>全局与路由的执行关系</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>核心规则：全局规则始终先于路由插件执行</h3>
+                <p>无论全局规则中的插件 priority 是多少，全局规则 <strong>整体</strong> 都在路由插件之前执行。这是由 <code>http_access_phase()</code> 中的调用顺序硬编码决定的，而非 priority 比较。</p>
+            </div>
+            <div class="card">
+                <h3>每个阶段的执行时序</h3>
+<pre><code class="language-lua">-- ========== access_by_lua 阶段 ==========
+-- Step 1: 全局规则 rewrite 阶段（所有全局规则的插件按 priority 降序）
+-- Step 2: 全局规则 access 阶段（所有全局规则的插件按 priority 降序）
+-- Step 3: 路由插件 rewrite 阶段（路由+service+plugin_config 合并后按 priority 降序）
+-- Step 4: Consumer 识别 + 合并（认证插件在 rewrite 中识别出 consumer）
+-- Step 5: Consumer 新增插件 rewrite_in_consumer 阶段
+-- Step 6: 路由插件 access 阶段
+
+-- ========== header_filter_by_lua 阶段 ==========
+-- Step 7: 全局规则 header_filter 阶段
+-- Step 8: 路由插件 header_filter 阶段
+
+-- ========== body_filter_by_lua 阶段 ==========
+-- Step 9:  全局规则 body_filter 阶段
+-- Step 10: 路由插件 body_filter 阶段
+
+-- ========== log_by_lua 阶段 ==========
+-- Step 11: 全局规则 log 阶段
+-- Step 12: 路由插件 log 阶段</code></pre>
+                <div class="info-box">
+                    <strong>关键洞察：</strong>全局规则和路由插件是 <strong>两个独立的插件列表</strong>，各自内部按 priority 排序。全局规则总是先执行完毕，然后才开始路由插件。即使全局规则中某个插件的 priority 比路由插件低，它仍然先执行。
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>全局规则的特殊行为：404 请求也执行</h3>
+                <p>在 <code>http_access_phase()</code> 中，即使没有匹配到路由，全局规则仍然会执行：</p>
+<pre><code class="language-lua">local route = api_ctx.matched_route
+if not route then
+    -- ★ 未匹配路由，但全局规则仍然执行
+    local global_rules = apisix_global_rules.global_rules()
+    plugin.run_global_rules(api_ctx, global_rules, nil)
+
+    return core.response.exit(404, {error_msg = "404 Route Not Found"})
+end</code></pre>
+                <p>这意味着全局规则中的 prometheus、限流等插件可以统计和保护包括 404 在内的所有请求。</p>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 11 Service 与 Route 合并        -->
+        <!-- ============================== -->
+
+        <section id="service-merge" class="section">
+            <div class="section-header">
+                <span class="section-number">11</span>
+                <h1>Service 与 Route 合并</h1>
+            </div>
+            <div class="card">
+                <h3>合并规则：Route 插件优先于 Service 插件</h3>
+                <p><code>merge_service_route()</code>（<code>apisix/plugin.lua:582</code>）将 Service 和 Route 的插件合并：</p>
+<pre><code class="language-lua">local function merge_service_route(service_conf, route_conf)
+    -- ★ 以 Service 为基础创建深拷贝
+    local new_conf = core.table.deepcopy(service_conf)
+    new_conf.value.id = route_conf.value.id
+
+    -- ★ Route 的插件覆盖 Service 的同名插件
+    if route_conf.value.plugins then
+        for name, conf in pairs(route_conf.value.plugins) do
+            if not new_conf.value.plugins then
+                new_conf.value.plugins = {}
+            end
+            new_conf.value.plugins[name] = conf  -- 直接覆盖！
+        end
+    end
+
+    return new_conf
+end</code></pre>
+                <div class="info-box">
+                    <strong>合并策略：</strong>当 Route 和 Service 都配置了同名插件时，<strong>Route 的配置会完全覆盖 Service 的配置</strong>。Service 中独有的插件会被保留。这是一种 "Route 优先" 的合并策略。
+                </div>
+            </div>
+            <div class="card">
+                <h3>合并示例</h3>
+<pre><code class="language-yaml"># Service 配置
+Service:
+  plugins:
+    limit-count:              # ← 会被 Route 覆盖
+      count: 100
+    prometheus: {}            # ← Route 未配置，保留
+    http-logger:
+      uri: "http://log/v1"   # ← Route 未配置，保留
+
+# Route 配置
+Route:
+  service_id: "svc_1"
+  plugins:
+    limit-count:              # ← 覆盖 Service 的 limit-count
+      count: 50
+    key-auth: {}              # ← Route 独有，新增
+
+# 合并结果（最终生效的插件）
+Merged:
+  plugins:
+    limit-count:
+      count: 50               # ← 来自 Route（覆盖）
+    prometheus: {}             # ← 来自 Service（保留）
+    http-logger:
+      uri: "http://log/v1"    # ← 来自 Service（保留）
+    key-auth: {}               # ← 来自 Route（新增）</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 12 Plugin Config 合并           -->
+        <!-- ============================== -->
+
+        <section id="plugin-config-merge" class="section">
+            <div class="section-header">
+                <span class="section-number">12</span>
+                <h1>Plugin Config 合并</h1>
+            </div>
+            <div class="card">
+                <h3>Plugin Config：可复用的插件配置集</h3>
+                <p>Plugin Config 允许多个路由共享同一组插件配置。合并逻辑定义在 <code>apisix/plugin_config.lua:56</code>：</p>
+<pre><code class="language-lua">function _M.merge(route_conf, plugin_config)
+    -- ★ 备份 Route 原始插件配置（首次合并时）
+    if route_conf.orig_plugins then
+        route_conf.value.plugins = route_conf.orig_plugins  -- 恢复
+    else
+        route_conf.orig_plugins = route_conf.value.plugins  -- 备份
+    end
+
+    route_conf.value.plugins = core.table.clone(route_conf.value.plugins)
+
+    -- ★ Plugin Config 中的插件只在 Route 未配置时才生效
+    for name, value in pairs(plugin_config.value.plugins) do
+        if not route_conf.value.plugins[name] then
+            route_conf.value.plugins[name] = value
+        end
+    end
+
+    return route_conf
+end</code></pre>
+                <div class="info-box">
+                    <strong>合并策略：</strong>Plugin Config 的行为是 "补充而不覆盖"。只有当 Route 本身 <strong>没有</strong> 配置某个插件时，Plugin Config 中的该插件才会被合并进来。Route 已有的同名插件不会被覆盖。
+                </div>
+            </div>
+            <div class="card">
+                <h3>合并时序</h3>
+                <p>Plugin Config 的合并发生在 Service 合并 <strong>之前</strong>（<code>init.lua:639-648</code>）：</p>
+<pre><code class="language-lua">-- 先合并 Plugin Config
+if route.value.plugin_config_id then
+    local conf = plugin_config.get(route.value.plugin_config_id)
+    route = plugin_config.merge(route, conf)
+end
+
+-- 再合并 Service
+if route.value.service_id then
+    local service = service_fetch(route.value.service_id)
+    route = plugin.merge_service_route(service, route)
+end</code></pre>
+                <p>因此完整的合并优先级为：<strong>Route &gt; Plugin Config &gt; Service</strong>（Route 的配置最优先）。</p>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 13 Consumer 插件合并            -->
+        <!-- ============================== -->
+
+        <section id="consumer-merge" class="section">
+            <div class="section-header">
+                <span class="section-number">13</span>
+                <h1>Consumer 插件合并</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>Consumer 合并：认证之后的动态插件注入</h3>
+                <p>Consumer 是 APISIX 中最特殊的插件来源。它在 <strong>认证插件执行之后</strong> 才被识别，随后将 Consumer 上的插件动态合并到路由插件列表中。</p>
+            </div>
+            <div class="card">
+                <h3>Consumer 合并流程</h3>
+<pre><code class="language-lua">-- apisix/init.lua:691-722
+-- Step 1: 执行路由插件的 rewrite 阶段（包含认证插件如 key-auth）
+plugin.run_plugin("rewrite", plugins, api_ctx)
+
+-- Step 2: 认证插件在 rewrite 阶段识别出 consumer
+if api_ctx.consumer then
+    local group_conf
+    if api_ctx.consumer.group_id then
+        group_conf = consumer_group.get(api_ctx.consumer.group_id)
+    end
+
+    -- Step 3: 合并 Consumer / Consumer Group 的插件
+    route, changed = plugin.merge_consumer_route(
+        route, api_ctx.consumer, group_conf, api_ctx
+    )
+
+    if changed then
+        -- Step 4: 重新过滤插件列表
+        api_ctx.plugins = plugin.filter(api_ctx, route, api_ctx.plugins,
+                                        nil, "rewrite_in_consumer")
+        -- Step 5: 执行 Consumer 中新增插件的 rewrite 阶段
+        plugin.run_plugin("rewrite_in_consumer", api_ctx.plugins, api_ctx)
+    end
+end
+
+-- Step 6: 继续执行 access 阶段（包含 Consumer 的新插件）
+plugin.run_plugin("access", plugins, api_ctx)</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>merge_consumer_route 详解</h3>
+<pre><code class="language-lua">-- apisix/plugin.lua:697
+local function merge_consumer_route(route_conf, consumer_conf, consumer_group_conf)
+    local new_route_conf = core.table.deepcopy(route_conf)
+
+    -- ★ 先合并 Consumer Group 的插件
+    if consumer_group_conf then
+        for name, conf in pairs(consumer_group_conf.value.plugins) do
+            if new_route_conf.value.plugins[name] == nil then
+                conf._from_consumer = true  -- ★ 标记来自 Consumer
+            end
+            new_route_conf.value.plugins[name] = conf
+        end
+    end
+
+    -- ★ 再合并 Consumer 的插件（Consumer 覆盖 Consumer Group）
+    for name, conf in pairs(consumer_conf.plugins) do
+        if new_route_conf.value.plugins[name] == nil then
+            conf._from_consumer = true  -- ★ 标记来自 Consumer
+        end
+        new_route_conf.value.plugins[name] = conf
+    end
+
+    return new_route_conf
+end</code></pre>
+                <div class="info-box">
+                    <strong>合并策略要点：</strong><br>
+                    1. Consumer Group 插件先合并，然后 Consumer 插件合并（Consumer 覆盖 Consumer Group 的同名插件）<br>
+                    2. 如果 Route 已有同名插件，Consumer 的同名插件会 <strong>覆盖</strong> Route 的配置<br>
+                    3. Route 中没有的插件会被标记为 <code>_from_consumer = true</code>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>rewrite_in_consumer：避免重复执行</h3>
+                <p>当 Consumer 插件合并后，APISIX 需要执行新增插件的 rewrite 阶段，但不能重复执行已经执行过的路由插件。<code>run_plugin()</code> 中的逻辑处理了这一点：</p>
+<pre><code class="language-lua">-- apisix/plugin.lua:1150-1163
+if phase == "rewrite_in_consumer" then
+    -- ★ 认证类插件跳过 consumer 阶段的 rewrite
+    if plugins[i].type == "auth" then
+        plugins[i + 1]._skip_rewrite_in_consumer = true
+    end
+    -- 实际调用 rewrite 函数
+    phase_func = plugins[i]["rewrite"]
+end
+
+-- ★ 非 Consumer 来源的插件跳过
+if phase == "rewrite_in_consumer" and plugins[i + 1]._skip_rewrite_in_consumer then
+    goto CONTINUE
+end
+
+-- apisix/plugin.lua:521-523 (filter 中的标记)
+-- 在 rewrite_in_consumer 阶段，非 consumer 来源的插件被标记跳过
+if phase == "rewrite_in_consumer" and not plugin_conf._from_consumer then
+    plugin_conf._skip_rewrite_in_consumer = true
+end</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 14 _meta.priority 自定义优先级  -->
+        <!-- ============================== -->
+
+        <section id="custom-priority" class="section">
+            <div class="section-header">
+                <span class="section-number">14</span>
+                <h1>_meta.priority 自定义优先级</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>在路由级别覆盖插件的默认执行顺序</h3>
+                <p>每个插件实例可以通过 <code>_meta.priority</code> 字段覆盖其默认的 priority 值，从而改变该路由中插件的执行顺序。</p>
+            </div>
+            <div class="card">
+                <h3>自定义优先级的排序逻辑</h3>
+<pre><code class="language-lua">-- apisix/plugin.lua:80-82 — 自定义排序函数
+local function custom_sort_plugin(l, r)
+    return l._meta.priority > r._meta.priority
+end
+
+-- apisix/plugin.lua:508-551 — filter() 中的自定义排序逻辑
+if custom_sort then
+    -- ★ 为未设置 _meta.priority 的插件填充默认值
+    for i = 1, #plugins, 2 do
+        local plugin_conf = plugins[i + 1]
+        if not plugin_conf._meta then
+            plugin_conf._meta = core.table.new(0, 1)
+            plugin_conf._meta.priority = plugins[i].priority  -- 用默认 priority
+        else
+            if not plugin_conf._meta.priority then
+                plugin_conf._meta.priority = plugins[i].priority
+            end
+        end
+    end
+
+    -- ★ 按 _meta.priority 降序重新排列
+    sort_tab(tmp_plugin_confs, custom_sort_plugin)
+end</code></pre>
+            </div>
+            <div class="card">
+                <h3>使用示例：让限流在认证之前执行</h3>
+<pre><code class="language-json">{
+    "uri": "/api/v1/heavy-endpoint",
+    "plugins": {
+        "key-auth": {
+            "_meta": {
+                "priority": 1000
+            }
+        },
+        "limit-count": {
+            "count": 10,
+            "time_window": 60,
+            "_meta": {
+                "priority": 3000
+            }
+        }
+    }
+}</code></pre>
+                <p>上面的配置将 <code>limit-count</code> 的优先级从默认的 1002 提升到 3000，使其在 <code>key-auth</code>（被降至 1000）之前执行。这在保护高负载端点时非常有用 —— 先限流再认证，避免认证操作消耗过多资源。</p>
+                <div class="info-box">
+                    <strong>注意：</strong><code>_meta.priority</code> 只影响当前路由/全局规则中的执行顺序，不会影响其他路由。如果路由中 <strong>任何一个</strong> 插件设置了 <code>_meta.priority</code>，则该路由的 <strong>所有插件</strong> 都会按 <code>_meta.priority</code> 重新排序。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 15 _meta.filter 条件执行        -->
+        <!-- ============================== -->
+
+        <section id="meta-filter" class="section">
+            <div class="section-header">
+                <span class="section-number">15</span>
+                <h1>_meta.filter 条件执行</h1>
+            </div>
+            <div class="card">
+                <h3>基于请求变量的动态插件开关</h3>
+                <p><code>_meta.filter</code> 允许插件根据请求变量动态决定是否执行。<code>meta_filter()</code>（<code>apisix/plugin.lua:429</code>）在每次插件执行前被调用：</p>
+<pre><code class="language-lua">local function meta_filter(ctx, plugin_name, plugin_conf)
+    local filter = plugin_conf._meta and plugin_conf._meta.filter
+    if not filter then
+        return true  -- 没有 filter 配置，总是执行
+    end
+
+    -- ★ 使用 resty.expr 表达式引擎对请求变量求值
+    local ex, err = expr_lrucache(plugin_name .. ctx.conf_type .. ctx.conf_id,
+                                   ctx.conf_version, expr.new, filter)
+    local ok, err = ex:eval(ctx.var)
+    return ok  -- true 则执行插件，false 则跳过
+end</code></pre>
+            </div>
+            <div class="card">
+                <h3>使用示例：仅对特定路径启用限流</h3>
+<pre><code class="language-json">{
+    "uri": "/api/*",
+    "plugins": {
+        "limit-count": {
+            "count": 10,
+            "time_window": 60,
+            "_meta": {
+                "filter": [
+                    ["uri", "~~", "^/api/v1/upload"]
+                ]
+            }
+        }
+    }
+}</code></pre>
+                <p>上面的配置使 <code>limit-count</code> 只在请求路径匹配 <code>^/api/v1/upload</code> 时才执行。</p>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 16 _meta.disable 禁用插件       -->
+        <!-- ============================== -->
+
+        <section id="meta-disable" class="section">
+            <div class="section-header">
+                <span class="section-number">16</span>
+                <h1>_meta.disable 禁用插件</h1>
+            </div>
+            <div class="card">
+                <h3>在路由级别禁用特定插件实例</h3>
+                <p><code>_meta.disable</code> 可以在不删除插件配置的情况下禁用它。<code>check_disable()</code>（<code>apisix/plugin.lua:84</code>）在 <code>filter()</code> 阶段被调用：</p>
+<pre><code class="language-lua">local function check_disable(plugin_conf)
+    if not plugin_conf then
+        return nil
+    end
+    if not plugin_conf._meta then
+       return nil
+    end
+    if type(plugin_conf._meta) ~= "table" then
+        return nil
+    end
+    return plugin_conf._meta.disable  -- ★ 返回 true 则跳过该插件
+end
+
+-- 在 filter() 中的使用
+if not check_disable(plugin_conf) then
+    -- 插件未被禁用，加入执行列表
+    core.table.insert(plugins, plugin_obj)
+    core.table.insert(plugins, plugin_conf)
+end</code></pre>
+            </div>
+            <div class="card">
+                <h3>使用示例</h3>
+<pre><code class="language-json">{
+    "uri": "/api/debug",
+    "plugins": {
+        "limit-count": {
+            "count": 100,
+            "time_window": 60,
+            "_meta": {
+                "disable": true
+            }
+        }
+    }
+}</code></pre>
+                <p>插件配置仍然保留，但不会被执行。将 <code>disable</code> 改为 <code>false</code> 即可重新启用，无需重新配置参数。</p>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 17 Rewrite 阶段详解             -->
+        <!-- ============================== -->
+
+        <section id="rewrite-phase" class="section">
+            <div class="section-header">
+                <span class="section-number">17</span>
+                <h1>Rewrite 阶段</h1>
+            </div>
+            <div class="card">
+                <h3>Rewrite 阶段是插件执行的第一站</h3>
+                <p>在路由插件的处理流程中，rewrite 是最先执行的阶段。大多数 <strong>认证插件</strong> 都在 rewrite 阶段工作，因为它们需要在业务逻辑之前完成身份验证：</p>
+<pre><code class="language-lua">-- rewrite 阶段的典型插件执行顺序（按 priority 降序）：
+-- 23000 real-ip          → 获取客户端真实 IP
+-- 12015 request-id       → 生成请求追踪 ID
+-- 12010 skywalking       → 创建 Trace Span
+--  4000 cors             → 处理 CORS 预检
+--  2520 basic-auth       → Basic 认证
+--  2510 jwt-auth         → JWT 认证
+--  2500 key-auth         → API Key 认证
+--  1008 proxy-rewrite    → 改写上游 URI/Host
+--   900 redirect         → 重定向</code></pre>
+            </div>
+            <div class="card">
+                <h3>Rewrite 阶段可中断请求</h3>
+                <p>如果认证失败，插件返回 401 状态码，后续所有插件（包括 access 阶段的）都不会执行：</p>
+<pre><code class="language-lua">-- 例如 key-auth 插件返回 401
+local code, body = phase_func(conf, api_ctx)
+-- code = 401, body = {message = "Missing API key"}
+
+if code or body then
+    if code >= 400 then
+        core.log.warn(plugins[i].name, " exits with http status code ", code)
+        if conf._meta and conf._meta.error_response then
+            body = conf._meta.error_response  -- 可自定义错误消息
+        end
+    end
+    core.response.exit(code, body)  -- ★ 中断整个请求处理
+end</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 18 Access 阶段详解              -->
+        <!-- ============================== -->
+
+        <section id="access-phase" class="section">
+            <div class="section-header">
+                <span class="section-number">18</span>
+                <h1>Access 阶段</h1>
+            </div>
+            <div class="card">
+                <h3>Access 阶段：业务控制的核心阶段</h3>
+                <p>Access 阶段在 Rewrite 和 Consumer 合并之后执行，此时 Consumer 信息已经可用。大多数 <strong>限流</strong>、<strong>访问控制</strong>、<strong>代理</strong> 插件在此阶段工作：</p>
+<pre><code class="language-lua">-- access 阶段的典型插件执行顺序：
+--  3000 ip-restriction       → IP 黑白名单
+--  2999 ua-restriction       → UA 黑白名单
+--  2400 consumer-restriction → Consumer 级别访问控制
+--  2000 authz-keycloak       → Keycloak 授权
+--  1085 proxy-cache          → 检查缓存命中
+--  1003 limit-conn           → 并发连接限制
+--  1002 limit-count          → 请求计数限流
+--  1001 limit-req            → 请求速率限流
+--   966 traffic-split        → 流量分割/灰度
+--   500 prometheus           → 监控指标采集
+-- -3000 ext-plugin-post-req  → 外部插件后处理</code></pre>
+            </div>
+            <div class="card">
+                <h3>Access 阶段与 Consumer 的关系</h3>
+                <p>由于 Consumer 在 Rewrite 阶段完成认证后合并，Access 阶段可以使用 Consumer 信息做更精细的控制：</p>
+<pre><code class="language-lua">-- 执行时序：
+-- 1. rewrite 阶段 → key-auth (priority: 2500) 识别出 consumer
+-- 2. consumer 合并 → 将 consumer 的 limit-count 合并到路由
+-- 3. rewrite_in_consumer → consumer 新增插件的 rewrite（如果有）
+-- 4. access 阶段 → limit-count 根据 consumer 身份做个性化限流
+--                → consumer-restriction 检查 consumer 权限</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 19 Header/Body Filter 阶段     -->
+        <!-- ============================== -->
+
+        <section id="header-body-filter" class="section">
+            <div class="section-header">
+                <span class="section-number">19</span>
+                <h1>Header/Body Filter 阶段</h1>
+            </div>
+            <div class="card">
+                <h3>响应处理阶段：不可中断</h3>
+                <p>这两个阶段在上游返回响应后执行，用于修改响应头和响应体。它们通过 <code>common_phase()</code> 调度：</p>
+<pre><code class="language-lua">function _M.http_header_filter_phase()
+    -- 设置 Server 响应头
+    core.response.set_header("Server", ver_header)
+
+    -- ★ 全局规则 header_filter → 路由插件 header_filter
+    common_phase("header_filter")
+end
+
+function _M.http_body_filter_phase()
+    -- ★ 全局规则 body_filter → 路由插件 body_filter
+    common_phase("body_filter")
+    -- ★ 全局规则 delayed_body_filter → 路由插件 delayed_body_filter
+    common_phase("delayed_body_filter")
+end</code></pre>
+            </div>
+            <div class="card">
+                <h3>典型的 header_filter/body_filter 插件</h3>
+<pre><code class="language-yaml"># header_filter 阶段插件：
+cors (4000):              修改 CORS 响应头
+response-rewrite (899):   重写响应头和状态码
+proxy-cache (1085):       设置缓存相关响应头
+
+# body_filter 阶段插件：
+response-rewrite (899):   改写响应体内容
+gzip (995):               响应体压缩
+brotli (996):             Brotli 压缩
+grpc-transcode (506):     gRPC ↔ JSON 转码
+ext-plugin-post-resp (-4000): 外部插件处理响应</code></pre>
+                <div class="info-box">
+                    <strong>注意：</strong>header_filter 和 body_filter 阶段的插件 <strong>不能中断请求</strong>。即使插件返回了错误状态码，也不会被处理，所有插件都会执行完毕。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 20 Log 阶段详解                 -->
+        <!-- ============================== -->
+
+        <section id="log-phase" class="section">
+            <div class="section-header">
+                <span class="section-number">20</span>
+                <h1>Log 阶段</h1>
+            </div>
+            <div class="card">
+                <h3>Log 阶段：请求处理的终点</h3>
+                <p>Log 阶段在响应发送给客户端之后执行，用于日志记录和资源清理：</p>
+<pre><code class="language-lua">function _M.http_log_phase()
+    -- ★ 全局规则 log → 路由插件 log
+    local api_ctx = common_phase("log")
+    if not api_ctx then
+        return
+    end
+
+    -- 被动健康检查
+    healthcheck_passive(api_ctx)
+
+    -- ★ 资源清理
+    core.ctx.release_vars(api_ctx)
+    if api_ctx.plugins then
+        core.tablepool.release("plugins", api_ctx.plugins)
+    end
+    core.tablepool.release("api_ctx", api_ctx)
+end</code></pre>
+            </div>
+            <div class="card">
+                <h3>Log 阶段的插件执行顺序</h3>
+<pre><code class="language-yaml"># log 阶段插件（按 priority 降序）：
+error-log-logger (1091):       Nginx 错误日志收集
+limit-conn (1003):             释放连接计数
+limit-count (1002):            更新计数器
+prometheus (500):              指标上报
+datadog (495):                 DataDog 监控
+loki-logger (414):             Loki 日志推送
+elasticsearch-logger (413):    ES 日志写入
+http-logger (410):             HTTP 日志回调
+skywalking-logger (408):       SkyWalking 日志
+kafka-logger (403):            Kafka 日志推送
+syslog (401):                  Syslog 输出
+file-logger (399):             文件日志
+clickhouse-logger (398):       ClickHouse 写入</code></pre>
+                <div class="info-box">
+                    <strong>注意：</strong>log 阶段中 <code>limit-conn</code> 和 <code>limit-count</code> 也有处理逻辑，用于释放连接计数和记录统计数据。它们的 log 阶段函数与 access 阶段函数不同，分别处理不同的逻辑。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 21 完整请求流转示例              -->
+        <!-- ============================== -->
+
+        <section id="flow-example" class="section">
+            <div class="section-header">
+                <span class="section-number">21</span>
+                <h1>完整请求流转示例</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>一个真实场景的完整执行链路</h3>
+                <p>假设我们有如下配置：一个全局规则启用了 prometheus 和 ip-restriction，一个路由启用了 key-auth、limit-count、proxy-rewrite、response-rewrite 和 http-logger，对应的 Consumer 上绑定了个性化的 limit-count。</p>
+            </div>
+            <div class="card">
+                <h3>配置</h3>
+<pre><code class="language-yaml"># 全局规则
+Global Rule #1:
+  plugins:
+    prometheus: {}
+    ip-restriction:
+      whitelist: ["10.0.0.0/8"]
+
+# 路由
+Route #1:
+  uri: /api/v1/*
+  service_id: svc_1
+  plugins:
+    key-auth: {}
+    limit-count:
+      count: 1000
+      time_window: 60
+    proxy-rewrite:
+      uri: /backend$uri
+    response-rewrite:
+      headers:
+        set:
+          X-Custom: "hello"
+    http-logger:
+      uri: "http://log-server/log"
+
+# Consumer
+Consumer user_A:
+  plugins:
+    key-auth:
+      key: "my-secret-key"
+    limit-count:
+      count: 50
+      time_window: 60</code></pre>
+            </div>
+            <div class="card">
+                <h3>完整执行流程</h3>
+<pre><code class="language-bash"># ==================== access_by_lua ====================
+
+# ---- 全局规则 rewrite 阶段 ----
+[Global] ip-restriction (3000) → rewrite  ✓ 白名单检查通过
+[Global] prometheus      (500)  → rewrite  (无 rewrite 函数，跳过)
+
+# ---- 全局规则 access 阶段 ----
+[Global] ip-restriction (3000) → access   ✓ IP 允许访问
+[Global] prometheus      (500)  → access   (无 access 函数，跳过)
+
+# ---- 路由插件 rewrite 阶段 ----
+[Route] key-auth         (2500) → rewrite  ✓ 认证成功，识别出 consumer: user_A
+[Route] proxy-rewrite    (1008) → rewrite  ✓ URI 改写: /api/v1/data → /backend/api/v1/data
+[Route] limit-count      (1002) → rewrite  (无 rewrite 函数，跳过)
+[Route] response-rewrite  (899) → rewrite  ✓ 记录需要修改的响应头
+[Route] http-logger       (410) → rewrite  (无 rewrite 函数，跳过)
+
+# ---- Consumer 合并 ----
+Consumer user_A 的 limit-count 覆盖 Route 的 limit-count (count: 1000 → 50)
+
+# ---- rewrite_in_consumer 阶段 ----
+# key-auth 是 auth 类型插件，跳过
+# limit-count 来自 consumer，但无 rewrite 函数，跳过
+
+# ---- 路由插件 access 阶段 ----
+[Route] key-auth         (2500) → access   (无 access 函数，跳过)
+[Route] proxy-rewrite    (1008) → access   (无 access 函数，跳过)
+[Route] limit-count      (1002) → access   ✓ 检查计数: 23/50，通过
+[Route] response-rewrite  (899) → access   (无 access 函数，跳过)
+[Route] http-logger       (410) → access   (无 access 函数，跳过)
+
+# → 转发到上游服务 → 上游返回响应 →
+
+# ==================== header_filter_by_lua ====================
+
+# ---- 全局规则 header_filter ----
+# (无 header_filter 插件)
+
+# ---- 路由插件 header_filter ----
+[Route] response-rewrite  (899) → header_filter  ✓ 设置 X-Custom: hello
+
+# ==================== body_filter_by_lua ====================
+
+# ---- 全局规则 body_filter ----
+# (无 body_filter 插件)
+
+# ---- 路由插件 body_filter ----
+# (本例中无 body_filter 插件)
+
+# ==================== log_by_lua ====================
+
+# ---- 全局规则 log ----
+[Global] prometheus      (500)  → log  ✓ 记录请求指标
+
+# ---- 路由插件 log ----
+[Route] limit-count      (1002) → log  ✓ 更新计数器统计
+[Route] http-logger       (410) → log  ✓ 发送日志到 http://log-server/log</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 22 总结与最佳实践               -->
+        <!-- ============================== -->
+
+        <section id="summary" class="section">
+            <div class="section-header">
+                <span class="section-number">22</span>
+                <h1>总结与最佳实践</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>APISIX 插件执行顺序的完整规则</h3>
+                <p>经过源码分析，我们可以将 APISIX 插件执行顺序总结为以下规则体系：</p>
+            </div>
+            <div class="card">
+                <h3>规则一：全局规则先于路由插件</h3>
+<pre><code class="language-lua">-- 在每个 OpenResty 阶段中：
+-- 1. 先执行全局规则的插件
+-- 2. 再执行路由插件
+-- 这个顺序是硬编码的，与 priority 无关</code></pre>
+            </div>
+            <div class="card">
+                <h3>规则二：同一列表内按 Priority 降序执行</h3>
+<pre><code class="language-lua">-- 全局规则内部：按 priority 降序
+-- 路由插件内部：按 priority 降序（可被 _meta.priority 覆盖）
+-- priority 值越大 → 越先执行 → 越接近客户端</code></pre>
+            </div>
+            <div class="card">
+                <h3>规则三：阶段按 OpenResty 生命周期顺序</h3>
+<pre><code class="language-bash">rewrite → (consumer merge) → rewrite_in_consumer → access
+       → header_filter → body_filter → delayed_body_filter → log</code></pre>
+            </div>
+            <div class="card">
+                <h3>规则四：插件合并的优先级</h3>
+<pre><code class="language-yaml"># 配置优先级（高 → 低）：
+# 1. Route 直接配置的插件（最高优先级）
+# 2. Plugin Config 中的插件（仅补充 Route 未配置的）
+# 3. Service 中的插件（被 Route 同名插件覆盖）
+# 4. Consumer / Consumer Group 的插件（认证后动态合并，覆盖同名插件）</code></pre>
+            </div>
+            <div class="card">
+                <h3>规则五：可中断阶段 vs 不可中断阶段</h3>
+<pre><code class="language-lua">-- 可中断阶段（rewrite / access）：
+--   插件返回 code >= 400 → 立即中断所有后续处理
+--   常见：认证失败 401、限流 429、IP 封禁 403
+
+-- 不可中断阶段（header_filter / body_filter / log）：
+--   所有插件都会执行，返回值被忽略</code></pre>
+            </div>
+            <div class="card">
+                <h3>最佳实践</h3>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#ef4444,#f97316);">1</div>
+                        <h4>全局规则用于通用策略</h4>
+                        <p>将 prometheus 监控、IP 封禁、全局限流等放入全局规则，确保对所有请求（包括 404）生效</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#8b5cf6,#6366f1);">2</div>
+                        <h4>善用 _meta.priority</h4>
+                        <p>对高负载端点，可以用 <code>_meta.priority</code> 让限流在认证之前执行，减少认证带来的资源消耗</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#06b6d4,#3b82f6);">3</div>
+                        <h4>理解合并优先级</h4>
+                        <p>Route 配置 &gt; Plugin Config &gt; Service。Consumer 的同名插件会覆盖 Route 的配置，用于实现个性化策略</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#22c55e,#16a34a);">4</div>
+                        <h4>认证插件放在 Rewrite</h4>
+                        <p>APISIX 的设计要求认证插件在 rewrite 阶段完成，这样 access 阶段才能使用 Consumer 信息做精细控制</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>一图总结：APISIX 插件执行全景</h3>
+<pre><code class="language-bash">HTTP Request
+    │
+    ▼
+┌──────────────────────────────────────────────────────┐
+│                  access_by_lua                        │
+│                                                       │
+│  ┌─ Global Rules ──────────────────────────────────┐  │
+│  │  rewrite:  ip-restriction(3000) → ...           │  │
+│  │  access:   ip-restriction(3000) → prometheus(500)│  │
+│  └──────────────────────────────────────────────────┘  │
+│                       ↓                               │
+│  ┌─ Route Plugins ─────────────────────────────────┐  │
+│  │  rewrite:  key-auth(2500) → proxy-rewrite(1008) │  │
+│  │                    ↓                             │  │
+│  │  [Consumer Merge: user_A 的插件合并到路由]        │  │
+│  │  rewrite_in_consumer: (consumer 新增插件)        │  │
+│  │                    ↓                             │  │
+│  │  access:   limit-count(1002) → traffic-split(966)│  │
+│  └──────────────────────────────────────────────────┘  │
+│                       ↓                               │
+│            → Upstream (上游服务) →                      │
+└──────────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────────────────────────────────┐
+│              header_filter_by_lua                      │
+│  Global Rules → Route: response-rewrite(899)          │
+└──────────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────────────────────────────────┐
+│               body_filter_by_lua                       │
+│  Global Rules → Route: gzip(995), response-rewrite(899)│
+└──────────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────────────────────────────────┐
+│                   log_by_lua                           │
+│  Global Rules: prometheus(500)                         │
+│  Route: limit-count(1002) → http-logger(410)          │
+└──────────────────────────────────────────────────────┘
+    │
+    ▼
+HTTP Response → Client</code></pre>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        hljs.highlightAll();
+
+        // Sidebar toggle
+        const sidebar = document.getElementById('sidebar');
+        const toggle = document.getElementById('sidebarToggle');
+        toggle.addEventListener('click', () => sidebar.classList.toggle('open'));
+
+        // Active nav link
+        const sections = document.querySelectorAll('.section');
+        const navLinks = document.querySelectorAll('.nav-link');
+
+        const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    navLinks.forEach(l => l.classList.remove('active'));
+                    const id = entry.target.id;
+                    const link = document.querySelector(`.nav-link[data-section="${id}"]`);
+                    if (link) link.classList.add('active');
+                }
+            });
+        }, { rootMargin: '-20% 0px -80% 0px' });
+
+        sections.forEach(s => observer.observe(s));
+
+        // Smooth scroll
+        navLinks.forEach(link => {
+            link.addEventListener('click', e => {
+                const section = link.dataset.section;
+                if (section) {
+                    e.preventDefault();
+                    document.getElementById(section).scrollIntoView({ behavior: 'smooth' });
+                    if (window.innerWidth <= 1024) sidebar.classList.remove('open');
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>
