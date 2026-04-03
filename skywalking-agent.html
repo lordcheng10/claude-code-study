@@ -48,6 +48,16 @@
             <li><a href="#data-carrier" class="nav-link" data-section="data-carrier">DataCarrier 异步缓冲</a></li>
             <li><a href="#grpc-report" class="nav-link" data-section="grpc-report">gRPC 数据上报</a></li>
 
+            <li class="nav-group-title">OneAgent 服务治理</li>
+            <li><a href="#oneagent-overview" class="nav-link" data-section="oneagent-overview">OneAgent 功能概览</a></li>
+            <li><a href="#oneagent-architecture" class="nav-link" data-section="oneagent-architecture">整体架构设计</a></li>
+            <li><a href="#oneagent-config" class="nav-link" data-section="oneagent-config">三级配置体系</a></li>
+            <li><a href="#oneagent-etcd" class="nav-link" data-section="oneagent-etcd">etcd 数据结构与客户端</a></li>
+            <li><a href="#oneagent-plugin" class="nav-link" data-section="oneagent-plugin">Eureka 插件拦截</a></li>
+            <li><a href="#oneagent-blacklist" class="nav-link" data-section="oneagent-blacklist">流量黑名单机制</a></li>
+            <li><a href="#oneagent-shutdown" class="nav-link" data-section="oneagent-shutdown">四层优雅下线</a></li>
+            <li><a href="#oneagent-reporter" class="nav-link" data-section="oneagent-reporter">数据上报与事件采集</a></li>
+
             <li class="nav-group-title">设计精华</li>
             <li><a href="#design-patterns" class="nav-link" data-section="design-patterns">核心设计模式</a></li>
             <li><a href="#flow-example" class="nav-link" data-section="flow-example">完整链路示例</a></li>
@@ -1316,11 +1326,794 @@ public void consume(List&lt;TraceSegment&gt; data) {
         </section>
 
         <!-- ============================== -->
-        <!-- 设计精华                        -->
+        <!-- OneAgent 服务治理               -->
         <!-- ============================== -->
 
         <div class="part-header">
             <span class="part-label">第六部分</span>
+            <h1 class="part-title">OneAgent 服务治理</h1>
+            <p class="part-desc">基于 etcd 的流量管理、黑名单过滤与四层优雅下线机制</p>
+        </div>
+
+        <!-- OneAgent 功能概览 -->
+        <section id="oneagent-overview" class="section">
+            <div class="section-header">
+                <span class="section-number">18</span>
+                <h1>OneAgent 功能概览</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>什么是 OneAgent</h3>
+                <p><strong>OneAgent</strong> 是 SkyWalking Java Agent 中的<strong>服务治理增强模块</strong>，在 APM 探针的基础上，利用 etcd 作为分布式协调中心，实现了自动摘流（黑名单过滤）和优雅下线（Graceful Shutdown）能力。它以可选插件（optional-plugin）的形式集成，通过 <code>OneAgentConfig.ENABLE_ONEAGENT</code> 开关控制是否加载。</p>
+            </div>
+            <div class="card">
+                <h3>核心能力</h3>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon">&#128279;</div>
+                        <h4>服务注册发现</h4>
+                        <p>拦截 Eureka 注册/发现流程，将 Provider/Consumer 信息同步写入 etcd，构建统一服务拓扑</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">&#128683;</div>
+                        <h4>流量黑名单</h4>
+                        <p>实例下线时自动加入黑名单，Consumer 侧 Ribbon/LoadBalancer 拦截器实时过滤，秒级摘流</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">&#128260;</div>
+                        <h4>优雅下线</h4>
+                        <p>四层防护：PreStop 文件监听 &rarr; Signal Handler &rarr; JVM Shutdown Hook &rarr; etcd Lease 过期，确保零流量损失</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">&#9881;</div>
+                        <h4>动态配置</h4>
+                        <p>三级配置体系（静态/全局/服务级），支持 etcd Watch 实时热更新，Service 级覆盖 Global 级</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>模块结构</h3>
+                <pre><code class="language-bash">apm-sniffer/
+├── apm-agent-core/src/.../oneagent/         # 核心模块
+│   ├── OneAgentConfig.java                  # 统一配置门面
+│   ├── EtcdClientService.java               # BootService 生命周期管理
+│   ├── EtcdClient.java                      # 纯 JDK HTTP etcd 客户端
+│   ├── ServiceContext.java                   # 全局服务上下文（volatile）
+│   ├── TrafficManager.java                   # 黑名单管理 &amp; 流量排空
+│   ├── ProviderDeregistrationManager.java    # Provider 注销 &amp; 多层清理
+│   ├── PreStopFileShutdownTrigger.java       # K8s PreStop 文件监听
+│   ├── config/                              # 配置子系统
+│   │   ├── StaticConfig.java                # 静态配置（启动时确定）
+│   │   ├── ConfigDefinitions.java           # 配置字段定义（含约束）
+│   │   ├── ConfigLoader.java                # 配置加载器
+│   │   ├── ConfigSnapshotManager.java       # 配置快照管理
+│   │   └── ConfigWatcher.java               # etcd Watch 热更新
+│   ├── model/                               # etcd 协议模型（17 个类）
+│   └── reporter/                            # 数据上报子系统
+│       ├── OneAgentDataReporter.java         # HTTP 上报服务
+│       ├── EventCollector.java               # 事件采集
+│       └── MetricCollector.java              # 指标采集
+│
+└── optional-plugins/optional-oneagent-plugins/
+    └── eureka-2.x-plugin/                   # Eureka 注册中心插件
+        ├── RegisterInterceptor.java          # 注册拦截 → etcd 写入
+        ├── DiscoveryInterceptor.java         # 发现拦截 → Consumer 注册
+        ├── RibbonServerListInterceptor.java  # Ribbon 黑名单过滤
+        └── SpringCloudLoadBalancerInterceptor.java  # SCL 黑名单过滤</code></pre>
+            </div>
+        </section>
+
+        <!-- 整体架构设计 -->
+        <section id="oneagent-architecture" class="section">
+            <div class="section-header">
+                <span class="section-number">19</span>
+                <h1>整体架构设计</h1>
+            </div>
+            <div class="card">
+                <h3>架构全景图</h3>
+                <pre><code class="language-bash">┌──────────────────────────────────────────────────────────────────────┐
+│                         JVM (微服务实例)                               │
+│                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                    SkyWalking Agent                              │  │
+│  │                                                                 │  │
+│  │  ┌───────────────┐   ┌────────────────┐   ┌────────────────┐   │  │
+│  │  │ EtcdClient    │   │ TrafficManager │   │ ProviderDereg  │   │  │
+│  │  │ Service       │   │                │   │ Manager        │   │  │
+│  │  │ (BootService) │   │ - Blacklist    │   │                │   │  │
+│  │  │               │──▶│ - Watch        │   │ - 4-layer      │   │  │
+│  │  │ priority=15   │   │ - Drain        │   │   cleanup      │   │  │
+│  │  └───────┬───────┘   └───────┬────────┘   └───────┬────────┘   │  │
+│  │          │                   │                     │            │  │
+│  │          ▼                   ▼                     ▼            │  │
+│  │  ┌──────────────────────────────────────────────────────────┐   │  │
+│  │  │                    EtcdClient (纯 JDK HTTP)               │   │  │
+│  │  │  put / get / delete / watch / lease / keepalive / auth   │   │  │
+│  │  └──────────────────────────┬───────────────────────────────┘   │  │
+│  └─────────────────────────────┼───────────────────────────────────┘  │
+│                                │                                      │
+│  ┌─────────────────────────────┼───────────────────────────────────┐  │
+│  │          Eureka Plugin (字节码增强)                               │  │
+│  │                             │                                   │  │
+│  │  register()  ──▶  RegisterInterceptor  ──▶  etcd put provider  │  │
+│  │  discover()  ──▶  DiscoveryInterceptor ──▶  etcd put consumer  │  │
+│  │  getServers()──▶  RibbonInterceptor    ──▶  blacklist filter   │  │
+│  └─────────────────────────────┼───────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                          etcd Cluster                                │
+│                                                                      │
+│  /oneagent/                                                          │
+│  ├── configs                    (全局动态配置 JSON)                    │
+│  │   └── {serviceName}         (服务级配置 JSON，覆盖全局)              │
+│  ├── services/                                                       │
+│  │   └── {serviceName}/                                              │
+│  │       ├── providers/{instanceId}   (Lease + Keepalive)            │
+│  │       └── consumers/{instanceId}   (Lease + Keepalive)            │
+│  └── traffic_manager/blacklist/                                      │
+│      └── {serviceName}/{instanceId}   (TTL 自动过期)                  │
+└──────────────────────────────────────────────────────────────────────┘</code></pre>
+            </div>
+            <div class="card">
+                <h3>启动流程：从 premain 到 OneAgent 就绪</h3>
+                <pre><code class="language-bash">JVM 启动  ─▶  SkyWalkingAgent.premain()
+                │
+                ├── 1. SnifferConfigInitializer
+                │      └── 加载 StaticConfig (ENABLE_ONEAGENT, ETCD_ENDPOINTS)
+                │
+                ├── 2. PluginBootstrap.loadPlugins()
+                │      └── PluginSelector.select()
+                │          ├── 排除 EXCLUDE_PLUGINS 中的插件
+                │          ├── 排除 gray-* (如果灰度关闭)
+                │          └── 排除 oneagent-* (如果 ENABLE_ONEAGENT=false)
+                │
+                ├── 3. installClassTransformer()
+                │      └── ByteBuddy 注册 Eureka 拦截点
+                │
+                └── 4. ServiceManager.boot()
+                       └── EtcdClientService (priority=15)
+                           ├── prepare()   → 校验 etcd 配置
+                           ├── boot()      → 创建 EtcdClient, 启动 PreStop 监听
+                           └── onComplete()→ 初始化 ConfigWatcher &amp; BlacklistWatch</code></pre>
+            </div>
+            <div class="card">
+                <h3>PluginSelector 中的 OneAgent 过滤</h3>
+                <p><code>PluginSelector.select()</code> 在加载插件时，根据 <code>OneAgentConfig.ENABLE_ONEAGENT</code> 决定是否过滤 <code>oneagent-</code> 前缀的插件：</p>
+                <pre><code class="language-java">// PluginSelector.java 核心逻辑
+public List&lt;AbstractClassEnhancePluginDefine&gt; select(
+        List&lt;AbstractClassEnhancePluginDefine&gt; plugins) {
+
+    // 1. 排除用户配置的 EXCLUDE_PLUGINS
+    // 2. 排除灰度插件 (gray-*)
+    // 3. 排除 OneAgent 插件 (如果功能关闭)
+    if (!OneAgentConfig.ENABLE_ONEAGENT) {
+        // 过滤所有 pluginName 以 "oneagent-" 开头的插件
+        removePlugins(plugins, "oneagent-");
+    }
+    return plugins;
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- 三级配置体系 -->
+        <section id="oneagent-config" class="section">
+            <div class="section-header">
+                <span class="section-number">20</span>
+                <h1>三级配置体系</h1>
+            </div>
+            <div class="card">
+                <h3>配置分层设计</h3>
+                <pre><code class="language-bash">┌──────────────────────────────────────────────────────────────┐
+│                    配置优先级（高 → 低）                        │
+│                                                              │
+│   Level 1: 静态配置 (StaticConfig)                            │
+│   ├── 来源: -D 系统属性 &gt; 环境变量 &gt; 默认值                   │
+│   ├── 特点: 启动时确定，不可动态修改                             │
+│   └── 示例: ENABLE_ONEAGENT, ETCD_ENDPOINTS                  │
+│                                                              │
+│   Level 2: 全局动态配置 (GLOBAL)                               │
+│   ├── 来源: etcd /oneagent/configs (JSON)                    │
+│   ├── 特点: 运行时 Watch 热更新，影响全部服务                    │
+│   └── 示例: ENABLE_ONEAGENT_FEATURE, ETCD_LEASE_TTL          │
+│                                                              │
+│   Level 3: 服务级动态配置 (SERVICE)                            │
+│   ├── 来源: etcd /oneagent/configs/{serviceName} (JSON)      │
+│   ├── 特点: 覆盖 GLOBAL 配置，实现细粒度管控                    │
+│   └── 示例: DRAIN_WAIT_TIME_MS, ENABLE_BLACKLIST             │
+└──────────────────────────────────────────────────────────────┘</code></pre>
+            </div>
+            <div class="card">
+                <h3>StaticConfig — 启动时静态配置</h3>
+                <table>
+                    <thead>
+                        <tr><th>配置项</th><th>系统属性 (-D)</th><th>环境变量</th><th>默认值</th><th>说明</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>ENABLE_ONEAGENT</td><td><code>oneagent.enable</code></td><td><code>ONEAGENT_ENABLE</code></td><td>true</td><td>总开关</td></tr>
+                        <tr><td>ETCD_ENDPOINTS</td><td><code>oneagent.etcd.endpoints</code></td><td><code>ONEAGENT_ETCD_ENDPOINTS</code></td><td>""</td><td>etcd 地址</td></tr>
+                        <tr><td>ETCD_SERVICE_PREFIX</td><td><code>oneagent.etcd.service.prefix</code></td><td><code>ONEAGENT_ETCD_SERVICE_PREFIX</code></td><td>/oneagent</td><td>etcd 路径前缀</td></tr>
+                        <tr><td>ETCD_USERNAME</td><td><code>oneagent.etcd.username</code></td><td><code>ONEAGENT_ETCD_USERNAME</code></td><td>""</td><td>认证用户</td></tr>
+                        <tr><td>ETCD_PASSWORD</td><td><code>oneagent.etcd.password</code></td><td><code>ONEAGENT_ETCD_PASSWORD</code></td><td>""</td><td>认证密码</td></tr>
+                    </tbody>
+                </table>
+                <pre><code class="language-java">// StaticConfig.java — 加载优先级：系统属性 &gt; 环境变量 &gt; 默认值
+public class StaticConfig {
+    public static final boolean ENABLE_ONEAGENT =
+        loadBoolean("oneagent.enable", "ONEAGENT_ENABLE", true);
+    public static final String ETCD_ENDPOINTS =
+        loadString("oneagent.etcd.endpoints", "ONEAGENT_ETCD_ENDPOINTS", "");
+
+    private static String loadString(String sysProp, String envVar, String def) {
+        String val = System.getProperty(sysProp);
+        if (val != null) return val;
+        val = System.getenv(envVar);
+        if (val != null) return val;
+        return def;
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>ConfigDefinitions — 动态配置字段定义</h3>
+                <p>每个配置字段定义为枚举值，包含 key、默认值、配置级别、是否支持动态更新、取值范围：</p>
+                <table>
+                    <thead>
+                        <tr><th>字段</th><th>级别</th><th>默认值</th><th>取值范围</th><th>动态</th><th>说明</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>ENABLE_ONEAGENT_FEATURE</td><td>GLOBAL</td><td>true</td><td>-</td><td>Y</td><td>运行时功能开关</td></tr>
+                        <tr><td>ETCD_LEASE_TTL</td><td>GLOBAL</td><td>60s</td><td>[10, 3600]</td><td>Y</td><td>Lease TTL</td></tr>
+                        <tr><td>DRAIN_WAIT_TIME_MS</td><td>SERVICE</td><td>1000ms</td><td>[0, 30000]</td><td>Y</td><td>流量排空等待</td></tr>
+                        <tr><td>ENABLE_BLACKLIST</td><td>SERVICE</td><td>false</td><td>-</td><td>Y</td><td>黑名单开关</td></tr>
+                        <tr><td>BLACKLIST_TTL_MS</td><td>SERVICE</td><td>60000ms</td><td>[5000, 432000000]</td><td>Y</td><td>黑名单条目 TTL</td></tr>
+                        <tr><td>BLACKLIST_MAX_COUNT</td><td>SERVICE</td><td>1</td><td>[1, 1000]</td><td>Y</td><td>每服务最大黑名单数</td></tr>
+                        <tr><td>PRESTOP_ENABLED</td><td>GLOBAL</td><td>true</td><td>-</td><td>N</td><td>PreStop 监听</td></tr>
+                        <tr><td>PRESTOP_FILE_PATH</td><td>GLOBAL</td><td>/tmp/prestop</td><td>-</td><td>N</td><td>PreStop 文件路径</td></tr>
+                    </tbody>
+                </table>
+                <pre><code class="language-java">// ConfigDefinitions.java — 类型安全的配置定义
+public enum ConfigDefinitions {
+    ENABLE_ONEAGENT_FEATURE("oneagent.feature.enable", "true",
+        ConfigLevel.GLOBAL, true),
+
+    DRAIN_WAIT_TIME_MS("oneagent.drain.wait.time.ms", "1000",
+        ConfigLevel.SERVICE, true, 0L, 30000L),
+
+    ENABLE_BLACKLIST("oneagent.blacklist.enable", "false",
+        ConfigLevel.SERVICE, true),
+
+    BLACKLIST_TTL_MS("oneagent.blacklist.ttl.ms", "60000",
+        ConfigLevel.SERVICE, true, 5000L, 432000000L),
+
+    ETCD_LEASE_TTL("oneagent.etcd.lease.ttl", "60",
+        ConfigLevel.GLOBAL, true, 10L, 3600L);
+    // ...
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>配置热更新流程</h3>
+                <pre><code class="language-bash">ConfigWatcher 启动
+    │
+    ├── Watch: /oneagent/configs  (全局配置)
+    │      └── PUT 事件 → JSON 解析 → ConfigValidator 校验
+    │                                   │
+    │                     ┌─────────────┴──────────────┐
+    │                     │ 检查 minValue / maxValue    │
+    │                     │ 超出范围 → 使用边界值 + 告警  │
+    │                     └─────────────┬──────────────┘
+    │                                   │
+    │                         ConfigSnapshotManager.update()
+    │                                   │
+    │                         通知所有 ConfigChangeListener
+    │
+    └── Watch: /oneagent/configs/{serviceName}  (服务级配置)
+           └── 同上流程，SERVICE 级配置覆盖 GLOBAL 级
+
+查询时: OneAgentConfig.getConfigValue(field, serviceName)
+         → 先查 SERVICE 级 → 无则 fallback GLOBAL 级 → 无则用默认值</code></pre>
+            </div>
+        </section>
+
+        <!-- etcd 数据结构与客户端 -->
+        <section id="oneagent-etcd" class="section">
+            <div class="section-header">
+                <span class="section-number">21</span>
+                <h1>etcd 数据结构与客户端</h1>
+            </div>
+            <div class="card">
+                <h3>etcd Key 设计</h3>
+                <pre><code class="language-bash">/oneagent/                                          # 前缀 (StaticConfig.ETCD_SERVICE_PREFIX)
+│
+├── configs                                         # 全局配置
+│   {"oneagent.feature.enable":"true",
+│    "oneagent.etcd.lease.ttl":"60"}
+│
+├── configs/{serviceName}                           # 服务级配置 (覆盖全局)
+│   {"oneagent.blacklist.enable":"true",
+│    "oneagent.drain.wait.time.ms":"5000"}
+│
+├── services/{serviceName}/
+│   ├── providers/{instanceId}                      # Provider 节点
+│   │   ├── Lease: TTL=60s + Keepalive              # 心跳续租
+│   │   └── Value: {                                # 实例元数据
+│   │         "ip": "10.0.1.5",
+│   │         "port": 8080,
+│   │         "serviceName": "order-service",
+│   │         "instanceId": "10.0.1.5:8080",
+│   │         "registeredTime": 1712000000000
+│   │       }
+│   │
+│   └── consumers/{consumerInstanceId}              # Consumer 节点
+│       ├── Lease: TTL=60s + Keepalive
+│       └── Value: consumer 元数据
+│
+└── traffic_manager/blacklist/
+    └── {serviceName}/{instanceId}                  # 黑名单条目
+        ├── Lease: TTL 由 BLACKLIST_TTL_MS 控制
+        └── Value: {
+              "ttlMs": 60000,
+              "expireTimeMs": 1712000060000
+            }</code></pre>
+            </div>
+            <div class="card">
+                <h3>EtcdClient — 零依赖 HTTP 客户端</h3>
+                <p>OneAgent 实现了一个<strong>纯 JDK HttpURLConnection</strong> 的 etcd v3 HTTP 客户端（约 69KB），不引入任何第三方 etcd SDK 依赖：</p>
+                <pre><code class="language-java">// EtcdClient.java — 核心 API
+public class EtcdClient {
+    // 基础 KV 操作
+    void put(String key, String value);
+    void putWithLease(String key, String value, long leaseId);
+    String get(String key);
+    void delete(String key);
+    void deleteRange(String prefix);  // 前缀批量删除
+
+    // Lease 管理
+    long leaseGrant(long ttl);         // 创建租约
+    void leaseKeepAlive(long leaseId); // 续租心跳
+    void leaseRevoke(long leaseId);    // 撤销租约
+
+    // Watch (HTTP 长连接流式)
+    void watch(String prefix, WatchCallback callback);
+
+    // Auth (Token 认证 + 自动刷新)
+    void authenticate(String user, String password);
+}</code></pre>
+                <p>设计亮点：</p>
+                <ul>
+                    <li><strong>零外部依赖</strong>：使用 JDK 内置 HttpURLConnection，避免 Jar 冲突</li>
+                    <li><strong>HTTP 流式 Watch</strong>：通过长连接读取 etcd Watch 事件流，而非轮询</li>
+                    <li><strong>Lease 续租</strong>：后台定时 Keepalive，实例异常退出时 Lease 自动过期</li>
+                    <li><strong>Token 认证</strong>：自动获取和刷新 etcd Auth Token</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>ServiceContext — 全局服务信息注册</h3>
+                <p>插件拦截器将服务信息写入 <code>ServiceContext</code>，供核心模块统一读取：</p>
+                <pre><code class="language-java">// ServiceContext.java — volatile 保证线程可见性
+public class ServiceContext {
+    private static volatile String serviceName;
+    private static volatile String instanceId;
+
+    public static void setServiceInfo(String svcName, String instId) {
+        serviceName = svcName.toLowerCase();  // 统一小写
+        instanceId = instId;
+    }
+
+    public static boolean isAvailable() {
+        return serviceName != null &amp;&amp; instanceId != null;
+    }
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- Eureka 插件拦截 -->
+        <section id="oneagent-plugin" class="section">
+            <div class="section-header">
+                <span class="section-number">22</span>
+                <h1>Eureka 插件拦截</h1>
+            </div>
+            <div class="card">
+                <h3>插件定义</h3>
+                <p>Eureka 2.x 插件通过 <code>skywalking-plugin.def</code> 声明 4 个拦截点：</p>
+                <pre><code class="language-properties"># skywalking-plugin.def
+oneagent-eureka-2.x=...RegisterInstrumentation
+oneagent-eureka-2.x=...DiscoveryInstrumentation
+oneagent-eureka-2.x=...RibbonServerListInstrumentation
+oneagent-eureka-2.x=...SpringCloudLoadBalancerInstrumentation</code></pre>
+            </div>
+            <div class="card">
+                <h3>RegisterInterceptor — 注册拦截</h3>
+                <p>拦截 Eureka 的 <code>register()</code> 方法，在注册完成后将 Provider 信息写入 etcd：</p>
+                <pre><code class="language-java">// RegisterInterceptor.java — afterMethod()
+public Object afterMethod(EnhancedInstance objInst, Method method,
+        Object[] allArguments, Class&lt;?&gt;[] argumentsTypes, Object ret) {
+
+    // 1. 功能开关检查
+    if (!OneAgentConfig.getBoolean(ENABLE_ONEAGENT_FEATURE)) return ret;
+    if (!ServiceContext.isAvailable()) return ret;
+
+    // 2. 从 Eureka InstanceInfo 提取元数据
+    InstanceInfo instanceInfo = (InstanceInfo) allArguments[0];
+    String serviceName = instanceInfo.getAppName().toLowerCase();
+    String instanceId = instanceInfo.getIPAddr() + ":" + instanceInfo.getPort();
+
+    // 3. 注册服务上下文
+    ServiceContext.setServiceInfo(serviceName, instanceId);
+
+    // 4. 写入 etcd (带 Lease 续租)
+    String providerPath = prefix + "/services/" + serviceName
+                        + "/providers/" + instanceId;
+    String value = buildProviderMetadata(instanceInfo);  // JSON
+    etcdClient.putWithLease(providerPath, value, leaseId);
+
+    // 5. 注册到 ProviderDeregistrationManager (下线时自动清理)
+    deregManager.registerProvider(providerPath, serviceName, instanceId);
+
+    return ret;
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>DiscoveryInterceptor — 发现拦截</h3>
+                <p>拦截服务发现流程，将 Consumer 注册到 etcd：</p>
+                <pre><code class="language-bash">应用调用 discoveryClient.getInstances("order-service")
+    │
+    ▼
+DiscoveryInterceptor.beforeMethod()
+    │
+    ├── 检查功能开关 &amp; ServiceContext
+    │
+    ├── 注册 Consumer 到 etcd (幂等)
+    │   key:   /oneagent/services/order-service/consumers/{consumerInstanceId}
+    │   value: consumer 元数据 JSON
+    │   lease: TTL + Keepalive
+    │
+    └── 返回原始结果（不修改发现结果）</code></pre>
+            </div>
+            <div class="card">
+                <h3>RibbonServerListInterceptor — 负载均衡黑名单过滤</h3>
+                <p>拦截 Ribbon 的 <code>getAllServers()</code> / <code>getReachableServers()</code>，过滤掉黑名单中的实例：</p>
+                <pre><code class="language-java">// RibbonServerListInterceptor.java — afterMethod()
+public Object afterMethod(EnhancedInstance objInst, Method method,
+        Object[] allArguments, Class&lt;?&gt;[] argumentsTypes, Object ret) {
+
+    List&lt;Server&gt; servers = (List&lt;Server&gt;) ret;
+    if (servers == null || servers.isEmpty()) return ret;
+
+    // 1. 功能开关 &amp; 黑名单开关检查 (SERVICE 级)
+    String serviceName = extractServiceName(servers);
+    if (!OneAgentConfig.getBoolean(ENABLE_BLACKLIST, serviceName)) return ret;
+
+    // 2. 快速路径: 黑名单为空则直接返回
+    if (TrafficManager.isBlacklistEmpty()) return ret;
+
+    // 3. 单次遍历过滤 (延迟分配 ArrayList)
+    List&lt;Server&gt; filtered = null;
+    for (int i = 0; i &lt; servers.size(); i++) {
+        String instanceId = RibbonInstanceUtils.getInstanceId(servers.get(i));
+        if (TrafficManager.isInBlacklist(instanceId)) {
+            if (filtered == null) {
+                filtered = new ArrayList&lt;&gt;(servers.subList(0, i));  // 延迟拷贝
+            }
+        } else if (filtered != null) {
+            filtered.add(servers.get(i));
+        }
+    }
+
+    // 4. 安全兜底: 全部被过滤则返回原列表
+    if (filtered != null &amp;&amp; filtered.isEmpty()) return ret;
+
+    return filtered != null ? filtered : ret;
+}</code></pre>
+                <p>设计亮点：</p>
+                <ul>
+                    <li><strong>延迟分配</strong>：只有命中黑名单时才创建新列表，零开销快速路径</li>
+                    <li><strong>安全兜底</strong>：如果所有实例都在黑名单，返回原列表防止服务完全不可用</li>
+                    <li><strong>SERVICE 级开关</strong>：每个服务可独立控制是否启用黑名单</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>完整请求流转图</h3>
+                <pre><code class="language-bash">Service-A (Consumer)                              Service-B (Provider)
+┌───────────────────┐                             ┌───────────────────┐
+│ Feign 调用         │                             │ Eureka register() │
+│ order-service      │                             │        │          │
+│      │             │                             │        ▼          │
+│      ▼             │                             │ RegisterInterceptor│
+│ Ribbon.getServers()│                             │   → etcd put      │
+│      │             │                             │     /providers/B  │
+│      ▼             │                             └───────────────────┘
+│ RibbonInterceptor  │
+│   → check blacklist│──── TrafficManager ────── etcd Watch ──── /providers/*
+│   → filter B (下线) │                                           (DELETE event)
+│   → return [C, D]  │
+│      │             │
+│      ▼             │
+│ 发往 C 或 D        │
+└───────────────────┘</code></pre>
+            </div>
+        </section>
+
+        <!-- 流量黑名单机制 -->
+        <section id="oneagent-blacklist" class="section">
+            <div class="section-header">
+                <span class="section-number">23</span>
+                <h1>流量黑名单机制</h1>
+            </div>
+            <div class="card">
+                <h3>TrafficManager 双层索引设计</h3>
+                <pre><code class="language-bash">TrafficManager 内存数据结构:
+
+blacklistEntries (ConcurrentHashMap):
+┌──────────────────┬────────────────────────────────────────┐
+│   instanceId     │          BlacklistEntry                │
+├──────────────────┼────────────────────────────────────────┤
+│ 10.0.1.5:8080    │ {serviceName:"order-svc", expireAt:T1}│
+│ 10.0.1.6:8080    │ {serviceName:"order-svc", expireAt:T2}│
+│ 10.0.2.3:9090    │ {serviceName:"pay-svc",   expireAt:T3}│
+└──────────────────┴────────────────────────────────────────┘
+
+serviceBlacklistIndex (ConcurrentHashMap):
+┌──────────────────┬──────────────────────────────┐
+│   serviceName    │      Set&lt;instanceId&gt;          │
+├──────────────────┼──────────────────────────────┤
+│ order-svc        │ {10.0.1.5:8080, 10.0.1.6:..} │
+│ pay-svc          │ {10.0.2.3:9090}               │
+└──────────────────┴──────────────────────────────┘
+
+查询: isInBlacklist("10.0.1.5:8080")
+      → O(1) 查 blacklistEntries
+      → 检查 expireAt，过期则 CAS 删除（懒删除）</code></pre>
+            </div>
+            <div class="card">
+                <h3>黑名单 Watch 事件处理</h3>
+                <pre><code class="language-java">// TrafficManager.java — Watch 回调
+private void handleBlacklistWatchEvent(WatchEvent event) {
+    String key = event.getKey();   // /oneagent/traffic_manager/blacklist/{svc}/{inst}
+    String instanceId = extractInstanceId(key);
+    String serviceName = extractServiceName(key);
+
+    switch (event.getType()) {
+        case PUT:
+            // 解析 BlacklistValue: {ttlMs, expireTimeMs}
+            BlacklistValue bv = deserialize(event.getValue());
+            long expireAt = System.currentTimeMillis() + bv.getTtlMs();
+            BlacklistEntry entry = new BlacklistEntry(serviceName, expireAt);
+
+            blacklistEntries.put(instanceId, entry);
+            serviceBlacklistIndex
+                .computeIfAbsent(serviceName, k -&gt; ConcurrentHashMap.newKeySet())
+                .add(instanceId);
+            break;
+
+        case DELETE:
+            blacklistEntries.remove(instanceId);
+            Set&lt;String&gt; set = serviceBlacklistIndex.get(serviceName);
+            if (set != null) set.remove(instanceId);
+            break;
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>黑名单查询 — 懒删除策略</h3>
+                <pre><code class="language-java">// TrafficManager.java — 快速路径 + 懒过期
+public static boolean isInBlacklist(String instanceId) {
+    BlacklistEntry entry = blacklistEntries.get(instanceId);
+    if (entry == null) return false;
+
+    // 检查本地 TTL 是否过期
+    if (System.currentTimeMillis() &gt; entry.getExpireAt()) {
+        // CAS 删除：防止并发重复删除
+        blacklistEntries.remove(instanceId, entry);
+        Set&lt;String&gt; set = serviceBlacklistIndex.get(entry.getServiceName());
+        if (set != null) set.remove(instanceId);
+        return false;
+    }
+    return true;
+}</code></pre>
+                <p>设计要点：</p>
+                <ul>
+                    <li><strong>双重过期</strong>：etcd 侧 Lease TTL + 本地 expireAt，双保险</li>
+                    <li><strong>CAS 懒删除</strong>：查询时检测过期并原子移除，无需后台清理线程</li>
+                    <li><strong>O(1) 查询</strong>：ConcurrentHashMap 直接定位，对 Ribbon 调用零延迟影响</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- 四层优雅下线 -->
+        <section id="oneagent-shutdown" class="section">
+            <div class="section-header">
+                <span class="section-number">24</span>
+                <h1>四层优雅下线</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>四层防护体系</h3>
+                <p>OneAgent 设计了四层递进式下线防护，确保在各种场景下都能实现<strong>零流量损失</strong>的优雅退出：</p>
+                <pre><code class="language-bash">Layer 1: PreStop 文件监听 (最早触发, K8s 场景)
+    │
+    ▼
+Layer 2: Signal Handler (SIGTERM/SIGINT)
+    │
+    ▼
+Layer 3: JVM Shutdown Hook (ServiceManager.shutdown)
+    │
+    ▼
+Layer 4: etcd Lease 自动过期 (兜底, kill -9 场景)</code></pre>
+            </div>
+            <div class="card">
+                <h3>Layer 1: PreStopFileShutdownTrigger</h3>
+                <p>K8s PreStop Hook 通过写文件触发下线流程，<strong>比 SIGTERM 更早</strong>：</p>
+                <pre><code class="language-java">// PreStopFileShutdownTrigger.java
+public class PreStopFileShutdownTrigger {
+    // 守护线程轮询检测 prestop 文件
+    private final ScheduledExecutorService executor =
+        Executors.newSingleThreadScheduledExecutor(
+            r -&gt; new Thread(r, "oneagent-prestop-watcher"));
+
+    public void start() {
+        // 启动时清理残留文件，防止误触发
+        Files.deleteIfExists(Paths.get(prestopFilePath));
+
+        executor.scheduleWithFixedDelay(() -&gt; {
+            String content = readFirstLine(prestopFilePath);
+            if ("stop".equals(content)) {
+                // 触发下线！
+                providerDeregManager.cleanupAllProviders();
+                trafficManager.waitForTrafficDrain();
+            }
+        }, 0, checkIntervalMs, TimeUnit.MILLISECONDS);
+    }
+}</code></pre>
+                <p>K8s Pod YAML 配置示例：</p>
+                <pre><code class="language-bash">lifecycle:
+  preStop:
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo 'stop' &gt; /tmp/prestop    # 触发 OneAgent 下线
+          sleep 15                        # 等待流量排空
+          # SIGTERM 将在 sleep 结束后发出</code></pre>
+            </div>
+            <div class="card">
+                <h3>Layer 2 &amp; 3: Signal Handler + Shutdown Hook</h3>
+                <pre><code class="language-bash">SIGTERM / SIGINT 信号到达
+    │
+    ▼
+Signal Handler (RegisterInterceptor 中注册)
+    ├── ProviderDeregistrationManager.cleanupAllProviders()
+    │   ├── 删除 etcd Provider 节点
+    │   ├── 加入黑名单 (如果条件满足)
+    │   └── 上报 INSTANCE_OFFLINE 事件
+    └── TrafficManager.waitForTrafficDrain()
+        └── sleep(DRAIN_WAIT_TIME_MS)  // 等待在途请求完成
+    │
+    ▼
+JVM Shutdown Hook (ServiceManager.shutdown → EtcdClientService.shutdown)
+    ├── 检查 cleaned 标志 (AtomicBoolean CAS)
+    │   └── 如果已被 PreStop/Signal 处理 → 跳过
+    ├── 未处理则执行完整清理流程
+    ├── 关闭 OneAgentDataReporter
+    └── 关闭 EtcdClient (撤销 Lease, 断开连接)</code></pre>
+            </div>
+            <div class="card">
+                <h3>Layer 4: etcd Lease 自动过期</h3>
+                <pre><code class="language-bash">异常退出场景 (kill -9, OOM, 物理机宕机):
+    │
+    ├── Keepalive 心跳停止
+    ├── etcd 等待 Lease TTL 过期 (默认 60s)
+    ├── Provider 节点自动删除
+    │
+    ▼
+Consumer 侧的 Watch 检测到 DELETE 事件
+    └── TrafficManager 将该实例加入黑名单
+        └── 后续请求自动绕过该实例</code></pre>
+            </div>
+            <div class="card">
+                <h3>ProviderDeregistrationManager — 核心清理逻辑</h3>
+                <pre><code class="language-java">// ProviderDeregistrationManager.java
+public void cleanupAllProviders() {
+    // AtomicBoolean CAS: 确保只执行一次
+    if (!cleaned.compareAndSet(false, true)) return;
+
+    for (Map.Entry&lt;String, ProviderInfo&gt; entry : registeredProviders.entrySet()) {
+        String providerPath = entry.getKey();
+        ProviderInfo info = entry.getValue();
+
+        // 1. 删除 etcd Provider 节点
+        boolean deleted = etcdClient.delete(providerPath);
+
+        if (deleted) {
+            // 2. 加入黑名单 (条件: 该服务有 &gt;1 个 Provider &amp;&amp; 黑名单未满)
+            if (providerCount &gt; 1 &amp;&amp; blacklistCount &lt; maxCount) {
+                String blacklistKey = prefix + "/traffic_manager/blacklist/"
+                    + info.getServiceName() + "/" + info.getInstanceId();
+                String blacklistValue = "{\"ttlMs\":" + ttlMs
+                    + ",\"expireTimeMs\":" + (now + ttlMs) + "}";
+                etcdClient.putWithLease(blacklistKey, blacklistValue, leaseId);
+            }
+
+            // 3. 上报 INSTANCE_OFFLINE 事件
+            eventCollector.reportEvent(AgentEvent.instanceOffline(info));
+            registeredProviders.remove(providerPath);
+        } else {
+            // 删除失败: 重置标志允许重试
+            cleaned.set(false);
+        }
+    }
+}</code></pre>
+            </div>
+            <div class="card">
+                <h3>完整下线时序图 (K8s 场景)</h3>
+                <pre><code class="language-bash">时间轴                     K8s              PreStop Trigger      Agent Core
+────────────────────────────────────────────────────────────────────────────
+ T+0s    Pod 终止信号 ─────▶ preStop Hook
+                             echo 'stop' ─▶ 检测到文件 ──────▶ 删除 Provider
+                                                              加入黑名单
+                                                              上报事件
+ T+1s                                       waitForDrain ────▶ sleep 10s
+                                                              (等待在途请求)
+ T+5s                        sleep 结束
+         发送 SIGTERM ───────────────────▶ Signal Handler
+                                           cleaned=true → 跳过 (已处理)
+ T+5s    SIGTERM ──────────────────────▶ JVM Shutdown Hook
+                                           cleaned=true → 跳过 (已处理)
+                                           关闭 Reporter
+                                           关闭 EtcdClient
+ T+11s                                     排空完成, 进程退出
+────────────────────────────────────────────────────────────────────────────
+ Consumer 侧: Watch 收到 DELETE → 黑名单生效 → 后续请求绕过下线实例</code></pre>
+            </div>
+        </section>
+
+        <!-- 数据上报与事件采集 -->
+        <section id="oneagent-reporter" class="section">
+            <div class="section-header">
+                <span class="section-number">25</span>
+                <h1>数据上报与事件采集</h1>
+            </div>
+            <div class="card">
+                <h3>上报子系统架构</h3>
+                <pre><code class="language-bash">┌──────────────────────────────────────────────────────────┐
+│                OneAgentDataReporter                       │
+│                (HTTP POST 定时上报)                         │
+│                                                          │
+│  ┌────────────────────┐    ┌────────────────────────┐    │
+│  │  EventCollector    │    │  MetricCollector        │    │
+│  │                    │    │                         │    │
+│  │  - INSTANCE_ONLINE │    │  - 方法调用计数          │    │
+│  │  - INSTANCE_OFFLINE│    │  - etcd 操作延迟         │    │
+│  │  - BLACKLIST_ADD   │    │  - 黑名单过滤统计        │    │
+│  │  - BLACKLIST_FAIL  │    │  - Keepalive 成功/失败   │    │
+│  │  - CONFIG_CHANGE   │    │                         │    │
+│  └────────────────────┘    └────────────────────────┘    │
+│                                                          │
+│  定时器: 每 N 秒收集一次 → 合并 → HTTP POST → 后端         │
+└──────────────────────────────────────────────────────────┘</code></pre>
+            </div>
+            <div class="card">
+                <h3>关键事件类型</h3>
+                <table>
+                    <thead>
+                        <tr><th>事件</th><th>触发时机</th><th>携带信息</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>INSTANCE_ONLINE</td><td>Provider 首次注册到 etcd</td><td>serviceName, instanceId, 元数据</td></tr>
+                        <tr><td>INSTANCE_OFFLINE</td><td>Provider 主动下线清理</td><td>serviceName, instanceId, 运行时长</td></tr>
+                        <tr><td>BLACKLIST_ADD</td><td>实例加入黑名单</td><td>targetService, instanceId, ttlMs</td></tr>
+                        <tr><td>BLACKLIST_FAIL</td><td>黑名单写入失败</td><td>失败原因, targetService</td></tr>
+                        <tr><td>CONFIG_CHANGE</td><td>动态配置变更</td><td>变更字段, 旧值, 新值</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 设计精华                        -->
+        <!-- ============================== -->
+
+        <div class="part-header">
+            <span class="part-label">第七部分</span>
             <h1 class="part-title">设计精华</h1>
             <p class="part-desc">核心设计模式与完整链路追踪示例</p>
         </div>
@@ -1328,7 +2121,7 @@ public void consume(List&lt;TraceSegment&gt; data) {
         <!-- 核心设计模式 -->
         <section id="design-patterns" class="section">
             <div class="section-header">
-                <span class="section-number">18</span>
+                <span class="section-number">26</span>
                 <h1>核心设计模式</h1>
             </div>
             <div class="card">
@@ -1405,7 +2198,7 @@ public void consume(List&lt;TraceSegment&gt; data) {
         <!-- 完整链路示例 -->
         <section id="flow-example" class="section">
             <div class="section-header">
-                <span class="section-number">19</span>
+                <span class="section-number">27</span>
                 <h1>完整链路追踪示例</h1>
             </div>
             <div class="card">
@@ -1492,7 +2285,7 @@ Service-B 的 Spring MVC 插件:
         <!-- 总结 -->
         <section id="sw-summary" class="section">
             <div class="section-header">
-                <span class="section-number">20</span>
+                <span class="section-number">28</span>
                 <h1>总结与启示</h1>
             </div>
             <div class="card highlight-card">
