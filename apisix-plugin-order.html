@@ -54,6 +54,10 @@
             <li><a href="#header-body-filter" class="nav-link" data-section="header-body-filter">Header/Body Filter 阶段</a></li>
             <li><a href="#log-phase" class="nav-link" data-section="log-phase">Log 阶段</a></li>
 
+            <li class="nav-group-title">实战案例</li>
+            <li><a href="#case-ratelimit" class="nav-link" data-section="case-ratelimit">案例：全局限流 UID 降级问题</a></li>
+            <li><a href="#case-solution" class="nav-link" data-section="case-solution">解决方案：Plugin Config 插件模板</a></li>
+
             <li class="nav-group-title">实战与总结</li>
             <li><a href="#flow-example" class="nav-link" data-section="flow-example">完整请求流转示例</a></li>
             <li><a href="#summary" class="nav-link" data-section="summary">总结与最佳实践</a></li>
@@ -1544,12 +1548,194 @@ clickhouse-logger (398):       ClickHouse 写入</code></pre>
         </section>
 
         <!-- ============================== -->
-        <!-- 21 完整请求流转示例              -->
+        <!-- 案例：全局限流 UID 降级问题       -->
+        <!-- ============================== -->
+
+        <section id="case-ratelimit" class="section">
+            <div class="section-header">
+                <span class="section-number">21</span>
+                <h1>案例：全局限流 UID 降级为 IP 的问题</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>问题背景</h3>
+                <p>在实际业务中，我们使用 <code>limit-req-advanced</code> 插件做限流，支持按 UID（用户ID）和 IP 两个维度。UID 来自 <code>bm-client-auth</code> 鉴权插件设置的 <code>X-BM-USER-ID</code> 请求头。期望全局开启限流以减少逐路由配置的工作量，但发现一旦全局开启，UID 维度的限流就会降级为 IP 维度限流。</p>
+            </div>
+            <div class="card">
+                <h3>插件配置</h3>
+<pre><code class="language-yaml"># 全局开启（global_rules）
+limit-req-advanced:        # priority: 1000, phase: access
+  uid_rules: [...]         # 需要读取 X-BM-USER-ID header
+  user_rules: [...]
+
+# 路由维度开启
+bm-client-auth:            # priority: 3800, phase: rewrite/access
+  # 鉴权成功后设置:
+  # ctx.var.uid = login_token.userId
+  # ngx.req.set_header("X-BM-USER-ID", login_token.userId)
+
+# 全局开启（global_rules）
+bm-client-log:             # priority: ?, phase: log
+  # 在 log 阶段读取 ctx.var.uid 记录日志</code></pre>
+            </div>
+            <div class="card">
+                <h3>问题分析：为什么全局限流拿不到 UID？</h3>
+                <p>关键在于<strong>全局插件和路由插件是两个独立的执行通道</strong>，在同一阶段内全局永远先于路由执行：</p>
+<pre><code class="language-bash"># ==================== access_by_lua ====================
+
+# ---- 第一轮：全局插件 rewrite + access ----
+[Global] limit-req-advanced (1000) → access
+  # 此时读取 X-BM-USER-ID → 为空！
+  # UID 为空 → 降级为 IP 限流 ❌
+
+# ---- 第二轮：路由插件 rewrite + access ----
+[Route] bm-client-auth (3800) → rewrite
+  # 鉴权成功，设置 X-BM-USER-ID = "12345" ✅
+  # 但为时已晚，全局限流已经执行完了
+
+# ==================== log_by_lua ====================
+
+# ---- 全局插件 log ----
+[Global] bm-client-log → log
+  # 读取 ctx.var.uid = "12345" ✅ 有值！
+  # 因为 log 阶段在 access 阶段之后，bm-client-auth 早已执行</code></pre>
+            </div>
+            <div class="card">
+                <h3>核心原理</h3>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#ef4444,#f97316);">!</div>
+                        <h4>同一阶段：全局先于路由</h4>
+                        <p><code>limit-req-advanced</code>（全局/access阶段）先于 <code>bm-client-auth</code>（路由/rewrite阶段）执行。Priority 只在同一通道内排序，无法跨越全局与路由的边界。</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#22c55e,#16a34a);">✓</div>
+                        <h4>跨阶段：生命周期保证顺序</h4>
+                        <p><code>bm-client-log</code> 虽然也是全局插件，但它在 <strong>log 阶段</strong>执行。log 阶段在整个请求生命周期的最后，此时路由插件的 access 阶段早已完成，所以能读到 UID。</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>一图理解：阶段 vs 通道</h3>
+<pre><code class="language-bash">                    全局通道              路由通道
+                 ┌──────────┐         ┌──────────┐
+  rewrite 阶段   │          │    →    │bm-client- │
+                 │          │         │auth(3800) │ ← 设置 UID
+                 ├──────────┤         ├──────────┤
+  access  阶段   │limit-req-│    →    │          │
+                 │advanced  │         │          │
+                 │(1000)    │         │          │
+                 │UID=空 ❌  │         │          │
+                 ├──────────┤         ├──────────┤
+                 │ [请求发往上游，等待响应返回]     │
+                 ├──────────┤         ├──────────┤
+  log     阶段   │bm-client-│    →    │          │
+                 │log       │         │          │
+                 │UID=有值 ✅│         │          │
+                 └──────────┘         └──────────┘
+
+ ※ 同一行（同一阶段）：全局通道 先于 路由通道
+ ※ 不同行（不同阶段）：严格按生命周期从上到下</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 案例解决方案：Plugin Config      -->
+        <!-- ============================== -->
+
+        <section id="case-solution" class="section">
+            <div class="section-header">
+                <span class="section-number">22</span>
+                <h1>解决方案：Plugin Config 插件模板</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>核心思路</h3>
+                <p>既然全局开启会导致限流先于鉴权执行，那就不要全局开启。利用 APISIX 的 <strong>Plugin Config（插件模板）</strong> 机制，将 <code>bm-client-auth</code> 和 <code>limit-req-advanced</code> 打包到同一个模板中，让它们都在路由维度执行。这样 Priority 就能正确控制执行顺序（3800 先于 1000），只需配置一次模板，多个路由引用即可。</p>
+            </div>
+            <div class="card">
+                <h3>方案对比</h3>
+<pre><code class="language-yaml"># ❌ 全局开启限流：UID 降级为 IP
+# limit-req-advanced 在全局 access 阶段执行，bm-client-auth 还没跑
+
+# ❌ 逐路由配置：太麻烦，每个路由都要重复配置一遍
+
+# ✅ Plugin Config 插件模板：配置一次，多路由引用
+# 两个插件都在路由维度执行，Priority 正常排序</code></pre>
+            </div>
+            <div class="card">
+                <h3>步骤一：创建 Plugin Config</h3>
+<pre><code class="language-bash">curl http://127.0.0.1:9180/apisix/admin/plugin_configs/1 \
+  -H "X-API-KEY: $admin_key" -X PUT -i -d '{
+    "desc": "鉴权 + 限流模板",
+    "plugins": {
+      "bm-client-auth": {
+        "_meta": { "priority": 3800 }
+      },
+      "limit-req-advanced": {
+        "policy": "redis",
+        "uid_rules": [...],
+        "user_rules": [...]
+      }
+    }
+  }'</code></pre>
+            </div>
+            <div class="card">
+                <h3>步骤二：路由引用 plugin_config_id</h3>
+<pre><code class="language-bash"># 每个路由只需要加一行 plugin_config_id，不用重复写插件配置
+curl http://127.0.0.1:9180/apisix/admin/routes/1 \
+  -H "X-API-KEY: $admin_key" -X PUT -i -d '{
+    "uri": "/api/v1/*",
+    "plugin_config_id": "1",
+    "upstream_id": "1"
+  }'</code></pre>
+            </div>
+            <div class="card">
+                <h3>使用 Plugin Config 后的执行流程</h3>
+<pre><code class="language-bash"># ==================== access_by_lua ====================
+
+# ---- 全局插件 ----
+# (limit-req-advanced 已从全局移除，这里没有限流插件)
+
+# ---- 路由插件 rewrite（来自 plugin_config_id: 1）----
+[Route] bm-client-auth     (3800) → rewrite  ✅ 鉴权成功，设置 UID
+[Route] limit-req-advanced  (1000) → access   ✅ 读到 UID，按用户维度限流
+
+# 两个插件都在路由维度，Priority 正常排序：3800 > 1000
+# bm-client-auth 先执行 → limit-req-advanced 后执行 → UID 有值 ✅</code></pre>
+            </div>
+            <div class="card">
+                <h3>Plugin Config 合并规则</h3>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#8b5cf6,#6366f1);">1</div>
+                        <h4>合并而非覆盖</h4>
+                        <p>如果路由同时有 <code>plugins</code> 和 <code>plugin_config_id</code>，两者的插件会<strong>合并</strong>。同名插件以路由直接配置的为准。</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#06b6d4,#3b82f6);">2</div>
+                        <h4>优先级顺序</h4>
+                        <p><strong>Consumer &gt; Consumer Group &gt; Route &gt; Plugin Config &gt; Service</strong>。Plugin Config 的优先级低于路由直接配置，但高于 Service。</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#22c55e,#16a34a);">3</div>
+                        <h4>引用检查</h4>
+                        <p>删除 Plugin Config 前需要先解除所有路由的引用。如果引用了不存在的 <code>plugin_config_id</code>，请求会返回 <strong>503</strong>。</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#f59e0b,#d97706);">4</div>
+                        <h4>Dashboard 支持</h4>
+                        <p>在 apisix-dashboard 的<strong>"插件模板"</strong>页面创建模板，编辑路由时在第3步选择模板即可，无需手动调 API。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 23 完整请求流转示例              -->
         <!-- ============================== -->
 
         <section id="flow-example" class="section">
             <div class="section-header">
-                <span class="section-number">21</span>
+                <span class="section-number">23</span>
                 <h1>完整请求流转示例</h1>
             </div>
             <div class="card highlight-card">
@@ -1660,7 +1846,7 @@ Consumer user_A 的 limit-count 覆盖 Route 的 limit-count (count: 1000 → 50
 
         <section id="summary" class="section">
             <div class="section-header">
-                <span class="section-number">22</span>
+                <span class="section-number">24</span>
                 <h1>总结与最佳实践</h1>
             </div>
             <div class="card highlight-card">
