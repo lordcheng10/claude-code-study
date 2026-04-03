@@ -702,6 +702,15 @@ a:hover { text-decoration:underline; }
 }
 .final-quote strong { color:var(--accent-purple); }
 
+/* Table */
+.table-wrapper { overflow-x:auto; margin:0 -4px; }
+.styled-table { width:100%; border-collapse:collapse; font-size:14px; }
+.styled-table thead { background:var(--card-bg); }
+.styled-table th { padding:12px 16px; text-align:left; font-weight:600; color:var(--accent); border-bottom:2px solid var(--border-color); white-space:nowrap; }
+.styled-table td { padding:10px 16px; border-bottom:1px solid var(--border-color); vertical-align:top; }
+.styled-table tbody tr:hover { background:rgba(99,102,241,0.06); }
+.styled-table td code { font-size:12px; padding:2px 6px; background:rgba(99,102,241,0.1); border-radius:4px; color:var(--accent); }
+
 /* Responsive */
 @media (max-width:1024px) {
   .feature-grid,.tool-detail-grid,.insight-grid,.api-features,.tips-grid,.example-grid,.transport-grid { grid-template-columns:1fr; }

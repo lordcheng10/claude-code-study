@@ -29,6 +29,7 @@
             <li><a href="#claude-md" class="nav-link" data-section="claude-md">CLAUDE.md 项目记忆</a></li>
             <li><a href="#mcp-usage" class="nav-link" data-section="mcp-usage">MCP 服务器配置</a></li>
             <li><a href="#advanced-usage" class="nav-link" data-section="advanced-usage">进阶技巧</a></li>
+            <li><a href="#auto-yes" class="nav-link" data-section="auto-yes">全自动化配置</a></li>
 
             <li class="nav-group-title">第二部分：源码解析</li>
             <li><a href="#overview" class="nav-link" data-section="overview">项目概述</a></li>
@@ -726,6 +727,155 @@ claude "我需要给 User 表添加 avatar_url 字段，
             </div>
         </section>
 
+        <!-- 全自动化配置 -->
+        <section id="auto-yes" class="section">
+            <div class="section-header">
+                <span class="section-number">11</span>
+                <h1>全自动化配置</h1>
+            </div>
+            <div class="card highlight-card">
+                <h3>告别 "Do you want to proceed?"</h3>
+                <p>默认情况下，Claude Code 在执行写文件、运行命令等敏感操作时会弹出确认提示，需要手动选择 Yes/No。在开发效率优先或 CI/CD 自动化场景下，你可以通过以下方式跳过所有确认，实现<strong>全自动执行</strong>。</p>
+            </div>
+
+            <div class="card">
+                <h3>方法 1：--dangerously-skip-permissions 标志</h3>
+                <p>启动时加上此标志，<strong>跳过所有权限确认</strong>，自动允许所有操作（写文件、执行命令、删除等）。</p>
+                <pre><code class="language-bash"># 交互式 REPL，跳过所有权限确认
+claude --dangerously-skip-permissions
+
+# 简写也可以
+claude --dangerously-skip-permissions "重构这个模块"</code></pre>
+                <div class="note" style="border-left-color: #ef4444;">
+                    <strong>⚠️ 风险提示：</strong>顾名思义 "dangerously"，此模式下 Claude 可以执行任何操作（包括删除文件、运行任意命令），请确保在可控环境中使用。
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>方法 2：-y / --yes 标志</h3>
+                <p>自动对所有确认提示回答 "Yes"，适合快速开发场景。</p>
+                <pre><code class="language-bash"># 交互式模式，自动回答 yes
+claude -y
+
+# 非交互式管道模式 + 自动 yes
+claude -p --yes "帮我修复这个 bug"
+
+# 等价写法
+claude -p -y "为所有函数添加类型注解"</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>方法 3：管道模式 (-p) 用于脚本和 CI/CD</h3>
+                <p><code>-p</code> 为非交互式管道模式，不会等待用户输入。搭配 <code>--dangerously-skip-permissions</code> 实现完全自动化。</p>
+                <pre><code class="language-bash"># 最常见的 CI/CD 全自动化组合
+claude -p --dangerously-skip-permissions "运行测试并修复失败的用例"
+
+# 管道传入上下文
+npm test 2>&1 | claude -p --dangerously-skip-permissions "分析并修复这些测试失败"
+
+# 从文件读取 prompt
+claude -p --dangerously-skip-permissions < prompt.txt
+
+# 搭配 --output-format json 获取结构化输出
+claude -p -y --output-format json "列出项目中的 TODO"</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>方法 4：配置 autoApprove 永久跳过特定工具确认</h3>
+                <p>如果你不想全局跳过，可以只对<strong>特定工具</strong>设置自动批准，粒度更细。</p>
+                <pre><code class="language-bash"># 设置全局自动批准的工具列表
+claude config set --global autoApprove "Bash,Write,Edit"
+
+# 查看当前配置
+claude config get autoApprove
+
+# 只批准 Bash 工具 (如 npm test, git 等命令)
+claude config set --global autoApprove "Bash"
+
+# 批准更多工具
+claude config set --global autoApprove "Bash,Write,Edit,MultiEdit,NotebookEdit"</code></pre>
+                <div class="note">
+                    <strong>工具名称参考：</strong>常用工具名包括 <code>Bash</code>（执行命令）、<code>Write</code>（写文件）、<code>Edit</code>（编辑文件）、<code>MultiEdit</code>（多文件编辑）、<code>NotebookEdit</code>（Notebook 编辑）。
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>方法 5：通过 /permissions 命令配置规则</h3>
+                <p>在 REPL 中使用 <code>/permissions</code> 添加细粒度规则，允许特定命令模式自动执行。</p>
+                <pre><code class="language-bash"># 在 Claude Code REPL 中输入
+/permissions
+
+# 添加允许规则示例：
+# 工具: Bash  规则: npm test        → npm test 自动执行
+# 工具: Bash  规则: git *           → 所有 git 命令自动执行
+# 工具: Bash  规则: npx prisma *    → prisma 命令自动执行</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>场景对照表</h3>
+                <div class="table-wrapper">
+                    <table class="styled-table">
+                        <thead>
+                            <tr>
+                                <th>场景</th>
+                                <th>推荐方式</th>
+                                <th>命令示例</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>本地开发，想省去手动确认</td>
+                                <td><code>--dangerously-skip-permissions</code></td>
+                                <td><code>claude --dangerously-skip-permissions</code></td>
+                            </tr>
+                            <tr>
+                                <td>CI/CD 完全自动化</td>
+                                <td><code>-p -y --dangerously-skip-permissions</code></td>
+                                <td><code>claude -p -y --dangerously-skip-permissions "task"</code></td>
+                            </tr>
+                            <tr>
+                                <td>只想跳过特定工具确认</td>
+                                <td><code>autoApprove</code> 配置</td>
+                                <td><code>claude config set --global autoApprove "Bash,Write"</code></td>
+                            </tr>
+                            <tr>
+                                <td>只允许特定命令模式</td>
+                                <td><code>/permissions</code> 规则</td>
+                                <td><code>/permissions</code> → 添加 <code>Bash: npm test</code></td>
+                            </tr>
+                            <tr>
+                                <td>REPL 中临时切换</td>
+                                <td><kbd>Shift+Tab</kbd> 切换到 bypassPermissions</td>
+                                <td>按 <kbd>Shift+Tab</kbd> 选择 bypassPermissions</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>GitHub Actions 中的完整示例</h3>
+                <pre><code class="language-bash"># .github/workflows/claude-autofix.yml
+name: Claude Auto Fix
+on:
+  issues:
+    types: [opened]
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Run Claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          claude -p --dangerously-skip-permissions \
+            "分析 issue #${{ github.event.issue.number }} 并尝试修复"</code></pre>
+            </div>
+        </section>
+
         <!-- ============================== -->
         <!-- 第二部分：源码解析                -->
         <!-- ============================== -->
@@ -739,7 +889,7 @@ claude "我需要给 User 表添加 avatar_url 字段，
         <!-- 项目概述 -->
         <section id="overview" class="section">
             <div class="section-header">
-                <span class="section-number">11</span>
+                <span class="section-number">12</span>
                 <h1>项目概述</h1>
             </div>
             <div class="card">
@@ -757,7 +907,7 @@ claude "我需要给 User 表添加 avatar_url 字段，
         <!-- 目录结构 -->
         <section id="structure" class="section">
             <div class="section-header">
-                <span class="section-number">12</span>
+                <span class="section-number">13</span>
                 <h1>目录结构</h1>
             </div>
             <div class="card">
@@ -834,7 +984,7 @@ src/types/
         <!-- 架构总览 -->
         <section id="architecture" class="section">
             <div class="section-header">
-                <span class="section-number">13</span>
+                <span class="section-number">14</span>
                 <h1>架构总览</h1>
             </div>
             <div class="card">
@@ -900,7 +1050,7 @@ src/types/
         <!-- 启动流程 -->
         <section id="entrypoint" class="section">
             <div class="section-header">
-                <span class="section-number">14</span>
+                <span class="section-number">15</span>
                 <h1>启动流程</h1>
             </div>
             <div class="card">
@@ -955,7 +1105,7 @@ src/types/
         <!-- Agent 核心循环 -->
         <section id="query-engine" class="section">
             <div class="section-header">
-                <span class="section-number">15</span>
+                <span class="section-number">16</span>
                 <h1>Agent 核心循环</h1>
             </div>
             <div class="card highlight-card">
@@ -1034,7 +1184,7 @@ async function getSystemPrompt(tools, model) {
         <!-- 工具系统实现 -->
         <section id="tools-impl" class="section">
             <div class="section-header">
-                <span class="section-number">16</span>
+                <span class="section-number">17</span>
                 <h1>工具系统实现</h1>
             </div>
             <div class="card">
@@ -1113,7 +1263,7 @@ async function* call(input, context) {
         <!-- API 调用层 -->
         <section id="api-layer" class="section">
             <div class="section-header">
-                <span class="section-number">17</span>
+                <span class="section-number">18</span>
                 <h1>API 调用层</h1>
             </div>
             <div class="card">
@@ -1152,7 +1302,7 @@ async function* queryModel(params): AsyncGenerator&lt;StreamEvent&gt; {
         <!-- MCP 实现 -->
         <section id="mcp-impl" class="section">
             <div class="section-header">
-                <span class="section-number">18</span>
+                <span class="section-number">19</span>
                 <h1>MCP 集成实现</h1>
             </div>
             <div class="card">
@@ -1189,7 +1339,7 @@ async function connectMCPServer(config) {
         <!-- UI Layer -->
         <section id="ui-layer" class="section">
             <div class="section-header">
-                <span class="section-number">19</span>
+                <span class="section-number">20</span>
                 <h1>终端 UI (Ink)</h1>
             </div>
             <div class="card">
@@ -1210,7 +1360,7 @@ async function connectMCPServer(config) {
         <!-- 状态管理 -->
         <section id="state-mgmt" class="section">
             <div class="section-header">
-                <span class="section-number">20</span>
+                <span class="section-number">21</span>
                 <h1>状态管理</h1>
             </div>
             <div class="card">
@@ -1244,7 +1394,7 @@ new QueryEngine({ getAppState, setAppState, ... })</code></pre>
         <!-- Feature Flags -->
         <section id="feature-flags" class="section">
             <div class="section-header">
-                <span class="section-number">21</span>
+                <span class="section-number">22</span>
                 <h1>Feature Flags</h1>
             </div>
             <div class="card">
@@ -1269,7 +1419,7 @@ const SleepTool = feature('KAIROS')
         <!-- 多 Agent -->
         <section id="multi-agent" class="section">
             <div class="section-header">
-                <span class="section-number">22</span>
+                <span class="section-number">23</span>
                 <h1>多 Agent 协作</h1>
             </div>
             <div class="card">
@@ -1307,7 +1457,7 @@ const SleepTool = feature('KAIROS')
         <!-- 系统提示词架构 -->
         <section id="prompt-arch" class="section">
             <div class="section-header">
-                <span class="section-number">23</span>
+                <span class="section-number">24</span>
                 <h1>系统提示词架构</h1>
             </div>
             <div class="card highlight-card">
@@ -1429,7 +1579,7 @@ const SleepTool = feature('KAIROS')
         <!-- Agent 调度链 -->
         <section id="agent-dispatch" class="section">
             <div class="section-header">
-                <span class="section-number">24</span>
+                <span class="section-number">25</span>
                 <h1>Agent 调度链</h1>
             </div>
             <div class="card highlight-card">
@@ -1544,7 +1694,7 @@ const SleepTool = feature('KAIROS')
         <!-- 内置 Agent 深挖 -->
         <section id="builtin-agents" class="section">
             <div class="section-header">
-                <span class="section-number">25</span>
+                <span class="section-number">26</span>
                 <h1>内置 Agent 深挖</h1>
             </div>
             <div class="card highlight-card">
@@ -1683,7 +1833,7 @@ const SleepTool = feature('KAIROS')
         <!-- Skill/Plugin/Hook 生态 -->
         <section id="ecosystem" class="section">
             <div class="section-header">
-                <span class="section-number">26</span>
+                <span class="section-number">27</span>
                 <h1>Skill / Plugin / Hook 生态</h1>
             </div>
             <div class="card highlight-card">
@@ -1797,7 +1947,7 @@ ${user_config.X}         — 用户配置变量</code></pre>
         <!-- 工具执行管线 -->
         <section id="tool-pipeline" class="section">
             <div class="section-header">
-                <span class="section-number">27</span>
+                <span class="section-number">28</span>
                 <h1>工具执行管线</h1>
             </div>
             <div class="card highlight-card">
@@ -1861,7 +2011,7 @@ deny              *                 → 直接拒绝</code></pre>
         <!-- 护城河分析 -->
         <section id="moat" class="section">
             <div class="section-header">
-                <span class="section-number">28</span>
+                <span class="section-number">29</span>
                 <h1>护城河分析</h1>
             </div>
             <div class="card highlight-card">
@@ -1916,7 +2066,7 @@ deny              *                 → 直接拒绝</code></pre>
         <!-- 总结 -->
         <section id="summary" class="section">
             <div class="section-header">
-                <span class="section-number">29</span>
+                <span class="section-number">30</span>
                 <h1>总结与启示</h1>
             </div>
             <div class="card">
