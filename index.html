@@ -10,14 +10,14 @@
         .home-body {
             display: flex;
             flex-direction: column;
+            align-items: center;
             min-height: 100vh;
-            padding: 0 clamp(24px, 5vw, 80px);
+            padding: 0 24px;
         }
         .home-header {
             text-align: center;
             padding: 80px 0 56px;
             max-width: 720px;
-            margin: 0 auto;
         }
         .home-logo {
             width: 64px; height: 64px;
@@ -41,10 +41,16 @@
             color: var(--text-secondary); font-size: 15px; margin-top: 4px;
         }
 
-        /* Blog cards grid — fill available width */
+        /* Centered content wrapper */
+        .home-content {
+            width: 100%;
+            max-width: 1100px;
+        }
+
+        /* Blog cards grid — auto-fit stretches cards to fill */
         .blog-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 20px;
             width: 100%;
             padding-bottom: 24px;
@@ -127,7 +133,7 @@
             text-align: center; padding: 32px 0;
             color: var(--text-muted); font-size: 12px;
             border-top: 1px solid var(--border-color);
-            width: 100%;
+            max-width: 1100px; width: 100%;
             margin-top: auto;
         }
 
@@ -153,6 +159,8 @@
                 </a>
             </p>
         </header>
+
+        <div class="home-content">
 
         <!-- ========== Apache APISIX ========== -->
         <div class="project-bar">
@@ -273,6 +281,8 @@
             </a>
 
         </div>
+
+        </div><!-- /.home-content -->
 
         <footer class="home-footer">
             Lord Study &mdash; 个人技术学习博客 &middot; 持续更新中
