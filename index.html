@@ -10,14 +10,14 @@
         .home-body {
             display: flex;
             flex-direction: column;
-            align-items: center;
             min-height: 100vh;
-            padding: 0 24px;
+            padding: 0 clamp(24px, 5vw, 80px);
         }
         .home-header {
             text-align: center;
-            padding: 80px 0 48px;
+            padding: 80px 0 56px;
             max-width: 720px;
+            margin: 0 auto;
         }
         .home-logo {
             width: 64px; height: 64px;
@@ -41,15 +41,15 @@
             color: var(--text-secondary); font-size: 15px; margin-top: 4px;
         }
 
-        /* Blog cards grid */
+        /* Blog cards grid — fill available width */
         .blog-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             gap: 20px;
-            max-width: 1200px;
             width: 100%;
             padding-bottom: 24px;
         }
+
         .blog-card {
             background: var(--bg-card);
             border: 1px solid var(--border-color);
@@ -101,24 +101,9 @@
         }
         .blog-card:hover .blog-card-arrow { text-decoration: underline; }
 
-        /* Section label */
-        .section-label {
-            max-width: 1200px; width: 100%;
-            font-size: 12px; font-weight: 700;
-            text-transform: uppercase; letter-spacing: .1em;
-            margin-bottom: 16px; padding-left: 4px;
-        }
-        .section-label.first { margin-top: 0; }
-        .section-label:not(.first) { margin-top: 36px; }
-
-        /* Project group colors */
-        .section-label.apisix { color: #ef4444; }
-        .section-label.observability { color: var(--accent-cyan); }
-        .section-label.ai { color: var(--accent-purple); }
-
         /* Project group indicator bar */
         .project-bar {
-            max-width: 1200px; width: 100%;
+            width: 100%;
             display: flex; align-items: center; gap: 12px;
             margin-bottom: 16px; padding-left: 4px;
         }
@@ -142,7 +127,7 @@
             text-align: center; padding: 32px 0;
             color: var(--text-muted); font-size: 12px;
             border-top: 1px solid var(--border-color);
-            max-width: 1200px; width: 100%;
+            width: 100%;
             margin-top: auto;
         }
 
