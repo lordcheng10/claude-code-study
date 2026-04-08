@@ -30,6 +30,7 @@
             <li><a href="#phase2" class="nav-link" data-section="phase2">Phase 2: 小功能开发</a></li>
             <li><a href="#phase3" class="nav-link" data-section="phase3">Phase 3: 中等功能</a></li>
             <li><a href="#phase4" class="nav-link" data-section="phase4">Phase 4: 复杂功能</a></li>
+            <li><a href="#one-skill" class="nav-link" data-section="one-skill">一键 Skill 全自动</a></li>
             <li><a href="#checklist" class="nav-link" data-section="checklist">落地 Checklist</a></li>
 
             <li class="nav-group-title">最佳实践</li>
@@ -416,6 +417,87 @@ Specs: Synced to openspec/specs/xxx-delete/spec.md</code></pre>
 你：/opsx:archive</code></pre>
                 <div class="tip">
                     <strong>建议：</strong>复杂功能建议拆成多轮小迭代，而不是一次性完成。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 08.5 一键 Skill                   -->
+        <!-- ============================== -->
+        <section id="one-skill" class="section">
+            <div class="section-header">
+                <span class="section-number">08+</span>
+                <h1>终极简化：一个 Skill 搞定全流程</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>人只需要输入一句话</h3>
+                <p>上面的 propose &rarr; apply &rarr; archive 三步可以合并成<strong>一个自定义 Skill</strong>，用户只需输入需求描述，Claude 自动跑完全流程：</p>
+                <pre><code class="language-bash"># 就这一句，剩下的全自动
+/sdd 在用户列表页添加批量删除功能</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>创建 Skill 文件</h3>
+                <p>将以下文件放到项目的 <code>.claude/skills/sdd.md</code>：</p>
+                <pre><code class="language-yaml">---
+name: sdd
+description: "SDD 规格驱动开发：输入需求，自动完成全流程"
+user-invocable: true
+argument-hint: "&lt;用自然语言描述需求&gt;"
+arguments:
+  - requirement
+when_to_use: "Use when user says 'sdd', '规格驱动', or wants structured feature development"
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
+  - Agent
+---</code></pre>
+                <p>Skill 正文定义了 9 个自动化步骤（详见项目 <code>.claude/skills/sdd.md</code>）：</p>
+                <ol>
+                    <li><strong>读取配置</strong> &mdash; 加载 config.yaml + 已有基线 specs</li>
+                    <li><strong>调研代码</strong> &mdash; Agent 并行探索相关模块</li>
+                    <li><strong>生成 Proposal</strong> &mdash; Why / What Changes / Capabilities / Impact</li>
+                    <li><strong>生成 Design</strong> &mdash; 分层归属、架构决策、备选方案</li>
+                    <li><strong>生成 Specs</strong> &mdash; Requirements (SHALL/MUST) + Scenarios (WHEN/THEN)</li>
+                    <li><strong>生成 Tasks</strong> &mdash; 30 分钟粒度、按依赖排序</li>
+                    <li><strong>逐个实现</strong> &mdash; 按 task 顺序写代码，实时汇报进度</li>
+                    <li><strong>归档</strong> &mdash; specs 同步基线、变更归档</li>
+                    <li><strong>总结报告</strong> &mdash; 输出完整的 artifact 链路和修改文件清单</li>
+                </ol>
+            </div>
+
+            <div class="card">
+                <h3>对比：手动 vs 一键 Skill</h3>
+                <table>
+                    <thead><tr><th>手动三步</th><th>一键 Skill</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <code>/opsx:propose ...</code><br>
+                                <em>(等待 &rarr; review)</em><br>
+                                <code>/opsx:apply</code><br>
+                                <em>(等待 &rarr; 验证)</em><br>
+                                <code>/opsx:archive</code><br>
+                                <em>(选择同步)</em>
+                            </td>
+                            <td>
+                                <code>/sdd 在用户列表页添加批量删除功能</code><br>
+                                <em>(全自动，最后输出总结报告)</em>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>适合需要中途 review 的场景</td>
+                            <td>适合信任 AI 或需求明确的场景</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="tip">
+                    <strong>建议：</strong>小功能用一键 Skill，大功能用手动三步（中途可以 review 和调整）。
                 </div>
             </div>
         </section>
