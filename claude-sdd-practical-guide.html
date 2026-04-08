@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code + SDD 实操落地教程 — 规格驱动开发实战指南</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/markdown.min.js"></script>
+</head>
+<body>
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">SD</div>
+            <h2>SDD 实操落地教程</h2>
+            <p class="version">OpenSpec + Claude Code</p>
+        </div>
+        <ul class="nav-list">
+            <li class="nav-group-title">方法论</li>
+            <li><a href="#what-is-sdd" class="nav-link active" data-section="what-is-sdd">什么是 SDD</a></li>
+            <li><a href="#preparation" class="nav-link" data-section="preparation">落地前的准备工作</a></li>
+            <li><a href="#artifacts" class="nav-link" data-section="artifacts">核心概念：Artifact</a></li>
+            <li><a href="#workflow" class="nav-link" data-section="workflow">标准工作流</a></li>
+
+            <li class="nav-group-title">实操流程</li>
+            <li><a href="#phase1" class="nav-link" data-section="phase1">Phase 1: 基线梳理</a></li>
+            <li><a href="#phase2" class="nav-link" data-section="phase2">Phase 2: 小功能开发</a></li>
+            <li><a href="#phase3" class="nav-link" data-section="phase3">Phase 3: 中等功能</a></li>
+            <li><a href="#phase4" class="nav-link" data-section="phase4">Phase 4: 复杂功能</a></li>
+            <li><a href="#checklist" class="nav-link" data-section="checklist">落地 Checklist</a></li>
+
+            <li class="nav-group-title">最佳实践</li>
+            <li><a href="#when-to-use" class="nav-link" data-section="when-to-use">什么时候用 SDD</a></li>
+            <li><a href="#writing-tips" class="nav-link" data-section="writing-tips">Artifact 写作要点</a></li>
+            <li><a href="#iteration" class="nav-link" data-section="iteration">迭代节奏建议</a></li>
+
+            <li class="nav-group-title">Claude Code 机制</li>
+            <li><a href="#claudemd" class="nav-link" data-section="claudemd">CLAUDE.md 分层体系</a></li>
+            <li><a href="#skills" class="nav-link" data-section="skills">Skills / Agent / Memory</a></li>
+
+            <li class="nav-group-title">模板与参考</li>
+            <li><a href="#templates" class="nav-link" data-section="templates">config.yaml 模板</a></li>
+            <li><a href="#quickref" class="nav-link" data-section="quickref">快速参考卡片</a></li>
+            <li><a href="#summary" class="nav-link" data-section="summary">总结</a></li>
+
+            <li class="nav-group-title">导航</li>
+            <li><a href="index.html" class="nav-link" style="color:var(--accent-cyan);">&larr; 返回博客主页</a></li>
+        </ul>
+    </nav>
+
+    <button class="sidebar-toggle" id="sidebarToggle">&#9776;</button>
+
+    <main class="content" id="content">
+
+        <div class="part-header">
+            <span class="part-label">实操教程</span>
+            <h1 class="part-title">Claude Code + SDD 落地指南</h1>
+            <p class="part-desc">将 Specification-Driven Development（规格驱动开发）融入任意项目的完整工作流</p>
+        </div>
+
+        <!-- ============================== -->
+        <!-- 01 什么是 SDD                   -->
+        <!-- ============================== -->
+        <section id="what-is-sdd" class="section">
+            <div class="section-header">
+                <span class="section-number">01</span>
+                <h1>什么是 SDD</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>规格驱动开发（Spec-Driven Development）</h3>
+                <p>SDD 的核心思想是：<strong>在写代码之前，先用结构化的 artifact（制品）把需求、设计、规格、任务全部定义清楚，然后让 AI 按照这些规格来生成和验证代码。</strong></p>
+            </div>
+
+            <div class="card">
+                <h3>传统流程 vs SDD 流程</h3>
+                <div class="compare-table">
+                    <table>
+                        <thead><tr><th>传统开发</th><th>SDD 开发</th></tr></thead>
+                        <tbody>
+                            <tr><td>需求 &rarr; 口头沟通 &rarr; 写代码 &rarr; 补文档</td>
+                                <td>需求 &rarr; Proposal &rarr; Design + Specs &rarr; Tasks &rarr; 代码 &rarr; 归档基线</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>核心价值</h3>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#8b5cf6,#6366f1);">&#128269;</div>
+                        <h4>需求可追溯</h4>
+                        <p>每个变更都有完整的 proposal &rarr; specs &rarr; tasks 链路</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#06b6d4,#8b5cf6);">&#129302;</div>
+                        <h4>AI 辅助生成</h4>
+                        <p>Claude Code 根据上下文自动生成各阶段 artifact</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#22c55e,#06b6d4);">&#128200;</div>
+                        <h4>增量基线管理</h4>
+                        <p>specs 归档后成为下次迭代的基线参考</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444);">&#9201;</div>
+                        <h4>任务粒度可控</h4>
+                        <p>每个 task 控制在 30 分钟以内，验收标准明确</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 02 准备工作                      -->
+        <!-- ============================== -->
+        <section id="preparation" class="section">
+            <div class="section-header">
+                <span class="section-number">02</span>
+                <h1>落地前的准备工作</h1>
+            </div>
+
+            <div class="card">
+                <h3>2.1 安装工具链</h3>
+                <pre><code class="language-bash"># 1. 安装 Claude Code（如未安装）
+npm install -g @anthropic-ai/claude-code
+
+# 2. 初始化 OpenSpec（在项目根目录执行）
+npx openspec init</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>2.2 初始化后的目录结构</h3>
+                <pre><code class="language-bash">your-project/
+├── openspec/                    # OpenSpec 工作目录
+│   ├── config.yaml              # 项目配置（schema、context、rules）
+│   ├── changes/                 # 活跃变更目录
+│   │   └── archive/             # 已归档变更
+│   └── specs/                   # 基线规格（归档时同步）
+├── CLAUDE.md                    # Claude Code 项目级指令（关键！）
+└── .claude/
+    ├── CLAUDE.md                # 可选的额外指令
+    └── rules/                   # 规则文件目录
+        └── *.md                 # 各种规则</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>2.3 配置 config.yaml</h3>
+                <p>根据你的项目技术栈和架构定制：</p>
+                <pre><code class="language-yaml">schema: spec-driven
+
+context: |
+  语言要求：所有 artifact 必须使用中文撰写。
+  项目：&lt;你的项目名&gt;
+  技术栈：&lt;你的技术栈，如 React + TypeScript + Node.js&gt;
+  架构：&lt;你的架构模式，如 组件 → Hooks → API → 后端&gt;
+
+rules:
+  proposal:
+    - 使用中文撰写
+    - "Why" 部分必须说明业务背景和动机
+  design:
+    - 使用中文撰写
+    - 必须说明分层归属
+  specs:
+    - 使用中文撰写
+    - 接口规格必须包含：URL、Method、请求体、响应体
+  tasks:
+    - 使用中文撰写
+    - 每个任务必须有明确的验收标准
+    - 任务粒度控制在 30 分钟以内</code></pre>
+                <div class="tip">
+                    <strong>提示：</strong><code>context</code> 和 <code>rules</code> 是给 AI 的约束，不会出现在生成的文件中。
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>2.4 配置 CLAUDE.md（项目级指令）</h3>
+                <p>Claude Code 读取指令的优先级顺序（源码分析得出）：</p>
+                <pre><code class="language-bash">1. /etc/claude-code/CLAUDE.md      — 全局托管指令（所有用户）
+2. ~/.claude/CLAUDE.md              — 用户级私有指令（所有项目）
+3. 项目根/CLAUDE.md                 — 项目级指令（提交到仓库）
+   项目根/.claude/CLAUDE.md         — 项目级指令（提交到仓库）
+   项目根/.claude/rules/*.md        — 项目规则文件
+4. 项目根/CLAUDE.local.md           — 本地私有指令（不提交）</code></pre>
+                <p>越靠后的文件优先级越高。建议在 <code>CLAUDE.md</code> 中写入：</p>
+                <pre><code class="language-markdown"># 项目说明
+- 这是 XXX 项目，使用 XXX 技术栈
+- 架构模式：XXX
+
+# 开发规范
+- 代码风格：遵循 ESLint / Prettier 配置
+- 提交规范：conventional commits
+
+# SDD 工作流
+- 本项目使用 OpenSpec 进行规格驱动开发
+- 所有功能变更必须通过 /opsx:propose 发起
+- 使用 /opsx:apply 实现，/opsx:archive 归档</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 03 核心概念                      -->
+        <!-- ============================== -->
+        <section id="artifacts" class="section">
+            <div class="section-header">
+                <span class="section-number">03</span>
+                <h1>核心概念：Artifact 依赖关系</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>四大 Artifact 的依赖链</h3>
+                <pre><code>proposal (ready)              &larr; 第一个创建，无依赖
+    &darr; unlocks
+design (blocked &rarr; ready)      specs (blocked &rarr; ready)    &larr; 依赖 proposal，可并行
+    &darr;                            &darr;
+    └──────── tasks (blocked &rarr; ready) ────────┘           &larr; 依赖 design + specs</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>各 Artifact 详解</h3>
+                <table>
+                    <thead><tr><th>Artifact</th><th>内容</th><th>关键要素</th></tr></thead>
+                    <tbody>
+                        <tr><td><strong>Proposal</strong></td><td>变更提案</td><td>Why（动机）、What Changes（范围）、Capabilities（能力点）、Impact（影响）</td></tr>
+                        <tr><td><strong>Design</strong></td><td>技术设计</td><td>分层归属、架构决策、备选方案对比</td></tr>
+                        <tr><td><strong>Specs</strong></td><td>详细规格</td><td>Requirements（SHALL/MUST）、Scenarios（WHEN/THEN）、可直接转测试用例</td></tr>
+                        <tr><td><strong>Tasks</strong></td><td>实施任务</td><td>30 分钟粒度、checkbox 格式、按依赖顺序排列</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 04 标准工作流                     -->
+        <!-- ============================== -->
+        <section id="workflow" class="section">
+            <div class="section-header">
+                <span class="section-number">04</span>
+                <h1>标准工作流（三步走）</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>工作流总览</h3>
+                <pre><code>explore（可选）&rarr; propose &rarr; apply &rarr; archive
+                    &uarr;                  &darr;
+                    └──────────────────┘   （下一轮迭代）</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>每个阶段对应的命令</h3>
+                <table>
+                    <thead><tr><th>阶段</th><th>Claude Code 命令</th><th>做什么</th></tr></thead>
+                    <tbody>
+                        <tr><td>探索（可选）</td><td><code>/opsx:explore</code></td><td>调研代码现状，适合对代码库不熟悉时使用</td></tr>
+                        <tr><td>提案</td><td><code>/opsx:propose</code></td><td>描述需求 &rarr; Claude 自动生成全套 artifact</td></tr>
+                        <tr><td>实现</td><td><code>/opsx:apply</code></td><td>Claude 逐个执行 task，自动写代码</td></tr>
+                        <tr><td>归档</td><td><code>/opsx:archive</code></td><td>归档变更，specs 同步为基线</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card">
+                <h3>OpenSpec CLI 命令速查</h3>
+                <table>
+                    <thead><tr><th>操作</th><th>命令</th></tr></thead>
+                    <tbody>
+                        <tr><td>初始化项目</td><td><code>npx openspec init</code></td></tr>
+                        <tr><td>新建变更</td><td><code>npx openspec new change "&lt;名称&gt;"</code></td></tr>
+                        <tr><td>查看依赖状态</td><td><code>npx openspec status "&lt;名称&gt;"</code></td></tr>
+                        <tr><td>查看 artifact 详情</td><td><code>npx openspec show "&lt;名称&gt;" --json</code></td></tr>
+                        <tr><td>归档变更</td><td><code>npx openspec archive "&lt;名称&gt;"</code></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 05 Phase 1: 基线梳理              -->
+        <!-- ============================== -->
+        <section id="phase1" class="section">
+            <div class="section-header">
+                <span class="section-number">05</span>
+                <h1>Phase 1: 基线梳理</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>首次使用 SDD 时必做</h3>
+                <p><strong>目标：</strong>让 Claude 理解项目现状，生成基线文档。这一步非常重要，它让 AI 有了项目的"全景地图"。</p>
+            </div>
+
+            <div class="card">
+                <h3>操作步骤</h3>
+                <pre><code class="language-bash">你：/opsx:propose
+Claude：What change do you want to work on?
+你：梳理当前项目 XXX 模块的基线能力，包括已有的 API、组件、数据模型</code></pre>
+                <p>Claude 会自动：</p>
+                <ol>
+                    <li>创建变更目录 <code>openspec/changes/baseline-xxx/</code></li>
+                    <li>启动后台 Agent 并行探索代码（前端、后端、数据层）</li>
+                    <li>按依赖顺序生成 proposal &rarr; design &rarr; specs &rarr; tasks</li>
+                    <li>输出完成摘要</li>
+                </ol>
+                <p>完成后执行 <code>/opsx:archive</code> 归档为基线，后续迭代可引用。</p>
+                <div class="info-box">
+                    <strong>注意：</strong>基线梳理不涉及代码修改，只产出文档。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 06 Phase 2: 小功能                -->
+        <!-- ============================== -->
+        <section id="phase2" class="section">
+            <div class="section-header">
+                <span class="section-number">06</span>
+                <h1>Phase 2: 小功能开发（~30min）</h1>
+            </div>
+
+            <div class="card">
+                <h3>示例：新增删除按钮</h3>
+                <p><strong>第一步：提案</strong></p>
+                <pre><code class="language-bash">你：/opsx:propose 在 XXX 页面的操作列中新增删除按钮，使用逻辑删除</code></pre>
+                <p>Claude 会自动调研代码，发现后端 API 已存在、前端封装已就绪、只缺按钮，然后生成全套 artifact。</p>
+            </div>
+
+            <div class="card">
+                <h3>第二步：实现</h3>
+                <pre><code class="language-bash">你：/opsx:apply
+
+# Claude 逐个执行 task：
+Working on task 1/4: 添加组件导入       ✓
+Working on task 2/4: 添加 API 导入      ✓
+Working on task 3/4: 在操作列添加按钮    ✓
+Working on task 4/4: 代码验证           ✓
+
+Implementation Complete
+Change: xxx-delete-button  Progress: 4/4 tasks complete</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>第三步：归档</h3>
+                <pre><code class="language-bash">你：/opsx:archive
+→ 选择「同步并归档」
+→ Specs 同步到 openspec/specs/ 作为基线
+
+Archive Complete
+Archived to: openspec/changes/archive/2026-04-08-xxx-delete-button/
+Specs: Synced to openspec/specs/xxx-delete/spec.md</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 07 Phase 3: 中等功能              -->
+        <!-- ============================== -->
+        <section id="phase3" class="section">
+            <div class="section-header">
+                <span class="section-number">07</span>
+                <h1>Phase 3: 中等功能开发（~1h）</h1>
+            </div>
+
+            <div class="card">
+                <h3>示例：新增创建功能（复用已有组件）</h3>
+                <pre><code class="language-bash">你：/opsx:propose 在 XXX 模块添加新增功能，需要复用已有的编辑弹窗组件</code></pre>
+                <p>Claude 调研后会做出<strong>设计决策</strong>（记录在 design.md）：</p>
+                <ul>
+                    <li>复用已有组件 vs 新建组件 &rarr; 选择复用，避免代码冗余</li>
+                    <li>新增 <code>mode</code> prop 区分创建/编辑模式</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h3>apply 阶段：按模块分组执行</h3>
+                <pre><code class="language-bash"># apply 阶段生成更多 task（如 12 个），按模块分组：
+组件改造 (6 tasks):
+  1.1 新增 mode / defaultTargetType props
+  1.2 import createAPI
+  1.3 useEffect 支持创建模式
+  1.4 Modal title 区分「新增」/「编辑」
+  1.5 表单字段条件渲染
+  1.6 handleOk 区分 create/update 调用
+
+页面集成 (4 tasks):
+  2.1 import PlusOutlined
+  2.2 添加 createVisible state
+  2.3 筛选区域添加「新增」按钮
+  2.4 渲染创建模式弹窗
+
+验证 (2 tasks):
+  3.1 创建模式代码验证通过
+  3.2 编辑模式后向兼容验证通过</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 08 Phase 4: 复杂功能              -->
+        <!-- ============================== -->
+        <section id="phase4" class="section">
+            <div class="section-header">
+                <span class="section-number">08</span>
+                <h1>Phase 4: 复杂功能（explore 先行）</h1>
+            </div>
+
+            <div class="card">
+                <h3>对不熟悉的模块，先用 explore 调研</h3>
+                <pre><code class="language-bash">你：/opsx:explore 调研 XXX 模块的实现细节，重点关注数据流和状态管理
+
+# Claude 探索后输出调研报告
+# 然后再进入标准流程：
+你：/opsx:propose ...
+你：/opsx:apply
+你：/opsx:archive</code></pre>
+                <div class="tip">
+                    <strong>建议：</strong>复杂功能建议拆成多轮小迭代，而不是一次性完成。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 09 落地 Checklist                -->
+        <!-- ============================== -->
+        <section id="checklist" class="section">
+            <div class="section-header">
+                <span class="section-number">09</span>
+                <h1>将 SDD 落地到你的项目</h1>
+            </div>
+
+            <div class="card">
+                <h3>Step 1: 项目初始化（一次性）</h3>
+                <ul>
+                    <li>在项目根目录执行 <code>npx openspec init</code></li>
+                    <li>根据项目技术栈和架构编辑 <code>openspec/config.yaml</code></li>
+                    <li>在 <code>CLAUDE.md</code> 中写入项目说明和 SDD 工作流约定</li>
+                    <li>将 <code>openspec/</code> 和 <code>CLAUDE.md</code> 提交到 Git</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h3>Step 2: 基线建立（首次）</h3>
+                <ul>
+                    <li>用 <code>/opsx:propose</code> 对核心模块做基线梳理</li>
+                    <li>Review 生成的 specs，确认准确性</li>
+                    <li>用 <code>/opsx:archive</code> 归档基线</li>
+                    <li>提交归档后的 <code>openspec/specs/</code> 到 Git</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h3>Step 3: 日常迭代（每次功能开发）</h3>
+                <ul>
+                    <li><code>/opsx:propose</code> 描述需求</li>
+                    <li>Review 生成的 proposal、design、specs、tasks</li>
+                    <li><code>/opsx:apply</code> 让 Claude 实现</li>
+                    <li>手动验证功能（启动项目、测试）</li>
+                    <li><code>/opsx:archive</code> 归档并同步基线</li>
+                    <li>Git commit &amp; push</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h3>Step 4: 持续优化</h3>
+                <ul>
+                    <li>根据实际体验调整 <code>config.yaml</code> 中的 rules</li>
+                    <li>在 <code>CLAUDE.md</code> 中补充 Claude 经常犯错的规则</li>
+                    <li>定期 review <code>openspec/specs/</code> 确保基线准确</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 10 什么时候用 SDD                -->
+        <!-- ============================== -->
+        <section id="when-to-use" class="section">
+            <div class="section-header">
+                <span class="section-number">10</span>
+                <h1>什么时候用 SDD</h1>
+            </div>
+
+            <div class="card">
+                <h3>场景判断</h3>
+                <table>
+                    <thead><tr><th>场景</th><th>是否使用 SDD</th><th>原因</th></tr></thead>
+                    <tbody>
+                        <tr><td>新功能开发</td><td><span style="color:var(--accent-green);">推荐</span></td><td>需求&rarr;代码全链路可追溯</td></tr>
+                        <tr><td>Bug 修复（明确原因）</td><td><span style="color:var(--text-muted);">不需要</span></td><td>直接修，太轻量不值得</td></tr>
+                        <tr><td>大规模重构</td><td><span style="color:var(--accent-green);font-weight:700;">强烈推荐</span></td><td>降低 AI 出错概率，分步可控</td></tr>
+                        <tr><td>探索性原型</td><td><span style="color:var(--text-muted);">不需要</span></td><td>快速试错优先</td></tr>
+                        <tr><td>多人协作功能</td><td><span style="color:var(--accent-green);">推荐</span></td><td>Specs 成为沟通契约</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 11 Artifact 写作要点             -->
+        <!-- ============================== -->
+        <section id="writing-tips" class="section">
+            <div class="section-header">
+                <span class="section-number">11</span>
+                <h1>Artifact 写作要点</h1>
+            </div>
+
+            <div class="card">
+                <h3>Proposal 写作要点</h3>
+                <ul>
+                    <li><strong>Why：</strong>1-2 句说清业务动机，不要写技术细节</li>
+                    <li><strong>What Changes：</strong>用 bullet list，具体到模块/文件级别</li>
+                    <li><strong>Capabilities：</strong>每个独立功能点一个 capability，用 kebab-case 命名</li>
+                    <li><strong>Impact：</strong>列出受影响的文件、API、依赖</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h3>Specs 写作要点</h3>
+                <ul>
+                    <li>每个 Requirement 使用 <code>### Requirement: &lt;name&gt;</code> 格式</li>
+                    <li>使用 <code>SHALL / MUST</code> 表达强制要求</li>
+                    <li>每个 Requirement 至少一个 Scenario（<code>WHEN / THEN</code> 格式）</li>
+                    <li>每个 Scenario 可直接转化为测试用例</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h3>Tasks 拆分原则</h3>
+                <ul>
+                    <li>每个 task <strong>30 分钟以内</strong>可完成</li>
+                    <li>使用 checkbox 格式：<code>- [ ] X.Y 任务描述</code></li>
+                    <li>按依赖顺序排列（先改 model，再改 service，最后改 controller/UI）</li>
+                    <li>验证任务单独成组，放在最后</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 12 迭代节奏                      -->
+        <!-- ============================== -->
+        <section id="iteration" class="section">
+            <div class="section-header">
+                <span class="section-number">12</span>
+                <h1>迭代节奏建议</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>推荐的迭代节奏</h3>
+                <pre><code>第一轮：基线梳理（propose → archive）
+  ↓
+第二轮：小功能（propose → apply → archive）  ~30min
+  ↓
+第三轮：中等功能（propose → apply → archive） ~1h
+  ↓
+第四轮：复杂功能（explore → propose → apply → archive）</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>归档后的基线管理</h3>
+                <p>归档后 specs 自动同步到 <code>openspec/specs/</code>：</p>
+                <pre><code class="language-bash">openspec/specs/
+├── user-delete/spec.md       # 删除能力基线
+├── user-create/spec.md       # 创建能力基线
+└── ...</code></pre>
+                <p>后续迭代中如需修改已有能力：</p>
+                <ol>
+                    <li>在 proposal 的 <code>Modified Capabilities</code> 中引用已有 spec 名称</li>
+                    <li>在 delta spec 中使用 <code>## MODIFIED Requirements</code> 标记变更部分</li>
+                </ol>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 13 CLAUDE.md 分层体系            -->
+        <!-- ============================== -->
+        <section id="claudemd" class="section">
+            <div class="section-header">
+                <span class="section-number">13</span>
+                <h1>CLAUDE.md 分层体系</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>来自 claude-code-sourcemap 源码分析</h3>
+                <p>Claude Code 使用 4 层 CLAUDE.md 配置，越靠后优先级越高：</p>
+                <table>
+                    <thead><tr><th>层级</th><th>路径</th><th>用途</th><th>提交 Git</th></tr></thead>
+                    <tbody>
+                        <tr><td>托管级</td><td><code>/etc/claude-code/CLAUDE.md</code></td><td>组织统一规范</td><td>N/A</td></tr>
+                        <tr><td>用户级</td><td><code>~/.claude/CLAUDE.md</code></td><td>个人偏好</td><td>否</td></tr>
+                        <tr><td>项目级</td><td><code>CLAUDE.md</code> / <code>.claude/rules/*.md</code></td><td>项目规范</td><td>是</td></tr>
+                        <tr><td>本地级</td><td><code>CLAUDE.local.md</code></td><td>本地调试</td><td>否</td></tr>
+                    </tbody>
+                </table>
+                <div class="tip">
+                    <strong>SDD 落地建议：</strong>在项目级 <code>CLAUDE.md</code> 中声明 SDD 工作流，确保团队所有人共享相同指令。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 14 Skills / Agent / Memory       -->
+        <!-- ============================== -->
+        <section id="skills" class="section">
+            <div class="section-header">
+                <span class="section-number">14</span>
+                <h1>Skills / Agent / Memory</h1>
+            </div>
+
+            <div class="card">
+                <h3>Skills（自定义斜杠命令）</h3>
+                <p>OpenSpec 的 <code>/opsx:propose</code>、<code>/opsx:apply</code>、<code>/opsx:archive</code> 就是通过 Skills 机制实现的。Skills 是 <code>.md</code> 文件，放在 <code>.claude/skills/</code> 目录，支持 frontmatter 定义参数。你也可以自定义 skill 封装常用操作。</p>
+            </div>
+
+            <div class="card">
+                <h3>Agent 子代理机制</h3>
+                <table>
+                    <thead><tr><th>类型</th><th>用途</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>general-purpose</code></td><td>通用多步任务</td></tr>
+                        <tr><td><code>Explore</code></td><td>快速代码库探索（quick / medium / very thorough）</td></tr>
+                        <tr><td><code>Plan</code></td><td>架构设计和实现规划</td></tr>
+                    </tbody>
+                </table>
+                <p>SDD 的 propose 阶段大量使用 Agent 并行探索代码库。</p>
+            </div>
+
+            <div class="card">
+                <h3>Memory 持久记忆</h3>
+                <p>Claude Code 的自动记忆系统（<code>~/.claude/projects/&lt;project&gt;/memory/</code>）跨会话保留用户偏好、项目上下文、外部引用。</p>
+                <div class="info-box">
+                    <strong>互补关系：</strong>Memory 记住"怎么做"，Specs 记住"做了什么"。
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 15 config.yaml 模板              -->
+        <!-- ============================== -->
+        <section id="templates" class="section">
+            <div class="section-header">
+                <span class="section-number">15</span>
+                <h1>不同项目的 config.yaml 模板</h1>
+            </div>
+
+            <div class="card">
+                <h3>前端项目（React / Vue）</h3>
+                <pre><code class="language-yaml">schema: spec-driven
+context: |
+  项目：XXX 管理后台
+  技术栈：React 18 + TypeScript + Ant Design + Zustand
+  架构：Pages → Components → Hooks → API → Types
+rules:
+  proposal:
+    - 使用中文撰写
+    - 说明影响的页面和组件
+  specs:
+    - 组件规格包含：Props 接口、事件、状态
+    - API 规格包含：URL、请求体、响应体
+  tasks:
+    - 先改 Types，再改 API，再改 Components，最后改 Pages
+    - 每个 task 30 分钟以内</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>后端项目（Go / Java / Python）</h3>
+                <pre><code class="language-yaml">schema: spec-driven
+context: |
+  项目：XXX 微服务
+  技术栈：Go 1.23 + Gin + GORM + Wire + PostgreSQL
+  架构：Controller → Service → DAO → Model 四层架构
+rules:
+  proposal:
+    - 使用中文撰写
+    - 必须说明 API 变更和数据库变更
+  design:
+    - 必须说明分层归属（Controller/Service/DAO/Model）
+  specs:
+    - 接口规格：URL、Method、请求体、响应体、错误码
+    - 数据模型：表结构、字段类型、约束
+  tasks:
+    - 先改 Model，再改 DAO，再改 Service，最后改 Controller
+    - 数据库迁移单独一个 task</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>全栈项目</h3>
+                <pre><code class="language-yaml">schema: spec-driven
+context: |
+  项目：XXX 平台
+  前端：Next.js 14 + TypeScript + Tailwind
+  后端：Node.js + Prisma + PostgreSQL
+  架构：前端 Pages → API Routes → Services → Prisma Models
+rules:
+  proposal:
+    - 使用中文撰写
+    - 分别说明前端和后端的改动范围
+  specs:
+    - 前后端接口必须定义 TypeScript 类型
+  tasks:
+    - 后端先行：Model → Service → API Route
+    - 前端跟进：Types → Hooks → Components → Pages
+    - 集成验证放最后</code></pre>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 16 快速参考卡片                   -->
+        <!-- ============================== -->
+        <section id="quickref" class="section">
+            <div class="section-header">
+                <span class="section-number">16</span>
+                <h1>快速参考卡片</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>日常开发三步曲</h3>
+                <pre><code class="language-bash"># 1. 提案：描述你想做什么
+/opsx:propose &lt;用自然语言描述需求&gt;
+
+# 2. 实现：Claude 自动写代码
+/opsx:apply
+
+# 3. 归档：保存为基线
+/opsx:archive</code></pre>
+            </div>
+
+            <div class="card">
+                <h3>遇到问题时</h3>
+                <table>
+                    <thead><tr><th>情况</th><th>怎么做</th></tr></thead>
+                    <tbody>
+                        <tr><td>Claude 生成的 spec 不准确</td><td>手动编辑 spec 文件后重新 apply</td></tr>
+                        <tr><td>Task 执行失败</td><td>检查错误，手动修复后继续</td></tr>
+                        <tr><td>需要修改已归档的能力</td><td>新 propose 中引用已有 spec</td></tr>
+                        <tr><td>对代码不熟悉</td><td>先用 <code>/opsx:explore</code> 调研</td></tr>
+                        <tr><td>第一次在项目用 SDD</td><td>先做基线梳理（Phase 1）</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- 17 总结                          -->
+        <!-- ============================== -->
+        <section id="summary" class="section">
+            <div class="section-header">
+                <span class="section-number">17</span>
+                <h1>总结</h1>
+            </div>
+
+            <div class="card highlight-card">
+                <h3>SDD + Claude Code 的本质</h3>
+                <p><strong>用结构化的文档驱动 AI 编码</strong>，而不是直接让 AI 自由发挥。</p>
+            </div>
+
+            <div class="card">
+                <h3>这套方法的威力</h3>
+                <div class="feature-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#8b5cf6,#6366f1);">1</div>
+                        <h4>约束 AI 行为边界</h4>
+                        <p>config.yaml 的 rules 和 CLAUDE.md 限定了 AI 的行为框架</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#06b6d4,#22c55e);">2</div>
+                        <h4>分解复杂度</h4>
+                        <p>proposal &rarr; design &rarr; specs &rarr; tasks 逐步细化，每一步都可 review</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#f59e0b,#ef4444);">3</div>
+                        <h4>积累项目知识</h4>
+                        <p>specs 归档为基线，越用越精准</p>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon" style="background:linear-gradient(135deg,#22c55e,#06b6d4);">4</div>
+                        <h4>可复现可追溯</h4>
+                        <p>每个变更都有完整的文档链路</p>
+                    </div>
+                </div>
+                <div class="tip" style="margin-top:20px;">
+                    <strong>从今天开始：</strong>对你的下一个功能需求，试试 <code>/opsx:propose</code>。
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <button class="scroll-top" id="scrollTopBtn" title="回到顶部">&uarr;</button>
+
+    <script src="app.js"></script>
+    <script>hljs.highlightAll();</script>
+</body>
+</html>
